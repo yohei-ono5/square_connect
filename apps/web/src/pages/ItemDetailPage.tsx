@@ -4,14 +4,6 @@ import { CONDITION_LABELS, buildDescription, type Condition } from "@clothes-che
 import { useItems, type PhotoRole } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
-const PHOTO_ROLES: { role: PhotoRole; label: string }[] = [
-  { role: "main", label: "正面" },
-  { role: "back", label: "背面" },
-  { role: "tag", label: "タグ" },
-  { role: "collar", label: "襟元" },
-  { role: "damage", label: "ダメージ" },
-];
-
 type TabKey = "photo" | "measure" | "basic" | "desc";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "photo", label: "写真" },
@@ -75,6 +67,7 @@ export function ItemDetailPage() {
   }
 
   const mainPhoto = item.photos.find((p) => p.role === "main");
+  const subPhotos = item.photos.filter((p) => p.role === "sub");
 
   return (
     <div className="screen">
@@ -110,31 +103,54 @@ export function ItemDetailPage() {
 
       {tab === "photo" && (
         <div className="content">
+          <p className="field-heading">正面写真（採寸に使用）</p>
           <div className="photo-grid">
-            {PHOTO_ROLES.map(({ role, label }) => {
-              const photo = item.photos.find((p) => p.role === role);
-              return photo ? (
-                <div key={role} className="photo-slot filled">
-                  <img src={photo.previewUrl} alt={label} />
-                  <span className="photo-slot-label">{label}</span>
-                  <button
-                    type="button"
-                    className="btn"
-                    style={{ position: "absolute", top: 6, right: 6, padding: "2px 8px", fontSize: 12 }}
-                    onClick={() => removePhoto(id!, role)}
-                  >
-                    削除
-                  </button>
-                </div>
-              ) : (
-                <button key={role} type="button" className="photo-slot empty" onClick={() => openPicker(role)}>
-                  <span>＋</span>
-                  <span style={{ fontSize: 12 }}>{label}を追加</span>
+            {mainPhoto ? (
+              <div className="photo-slot filled">
+                <img src={mainPhoto.previewUrl} alt="正面" />
+                <span className="photo-slot-label">正面</span>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ position: "absolute", top: 6, right: 6, padding: "2px 8px", fontSize: 12 }}
+                  onClick={() => removePhoto(id!, mainPhoto.id)}
+                >
+                  削除
                 </button>
-              );
-            })}
+              </div>
+            ) : (
+              <button type="button" className="photo-slot empty" onClick={() => openPicker("main")}>
+                <span>＋</span>
+                <span style={{ fontSize: 12 }}>正面写真を追加</span>
+              </button>
+            )}
           </div>
-          <p className="hint">写真は0枚でも保存できます。正面写真を追加すると自動採寸が使えます。</p>
+
+          <p className="field-heading" style={{ marginTop: 20 }}>
+            追加写真（任意・撮る場合だけでOK）
+          </p>
+          <div className="photo-grid">
+            {subPhotos.map((photo) => (
+              <div key={photo.id} className="photo-slot filled">
+                <img src={photo.previewUrl} alt="追加写真" />
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ position: "absolute", top: 6, right: 6, padding: "2px 8px", fontSize: 12 }}
+                  onClick={() => removePhoto(id!, photo.id)}
+                >
+                  削除
+                </button>
+              </div>
+            ))}
+            <button type="button" className="photo-slot empty" onClick={() => openPicker("sub")}>
+              <span>＋</span>
+              <span style={{ fontSize: 12 }}>写真を追加</span>
+            </button>
+          </div>
+          <p className="hint">
+            背面・タグ・襟元・ダメージなど、決まったカテゴリはありません。撮った分だけ自由に追加してください。写真は0枚でも保存できます。
+          </p>
         </div>
       )}
 

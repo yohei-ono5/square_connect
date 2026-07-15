@@ -1,8 +1,10 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { Item } from "@clothes-check/shared";
 
-export type PhotoRole = "main" | "back" | "collar" | "tag" | "damage";
-export type MockPhoto = { role: PhotoRole; previewUrl: string };
+// 正面写真だけが自動採寸のトリガーになる特別な役割。それ以外は撮る/撮らないが商品によって
+// 違うため、背面・タグ・襟元…のような固定カテゴリを設けず「追加写真」として自由に足せる。
+export type PhotoRole = "main" | "sub";
+export type MockPhoto = { id: string; role: PhotoRole; previewUrl: string };
 
 // Supabaseに繋ぐまでの仮のモデル。item_photosはDBでは別テーブルだが、
 // ここではデモ用にItemへ持たせている。
@@ -16,13 +18,14 @@ type ItemsContextValue = {
   addItem: (input: QuickRegisterInput) => MockItem;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   addPhoto: (id: string, role: PhotoRole, previewUrl: string) => void;
-  removePhoto: (id: string, role: PhotoRole) => void;
+  removePhoto: (id: string, photoId: string) => void;
 };
 
 const ItemsContext = createContext<ItemsContextValue | null>(null);
 
 let mgmtNoCounter = 604;
 let idCounter = 1;
+let photoIdCounter = 1;
 
 function nextId(): string {
   return String(idCounter++);
@@ -30,6 +33,10 @@ function nextId(): string {
 
 function nextMgmtNo(): string {
   return String(mgmtNoCounter++).padStart(5, "0");
+}
+
+function nextPhotoId(): string {
+  return `photo-${photoIdCounter++}`;
 }
 
 // シード用の簡易プレースホルダー画像（実際のアップロード写真が無いデモデータ用）
@@ -70,7 +77,7 @@ const seedItems: MockItem[] = [
     condition: "A",
     measurements: { shoulderCm: 44.9, chestCm: 51.0, lengthCm: 67.4, sleeveCm: 17.1 },
     squareObjectId: "sq-mock-seed-1",
-    photos: [{ role: "main", previewUrl: PLACEHOLDER_PHOTO }],
+    photos: [{ id: nextPhotoId(), role: "main", previewUrl: PLACEHOLDER_PHOTO }],
   }),
   makeItem({
     title: "バンドT ロックバンド",
@@ -101,16 +108,17 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       },
       addPhoto: (id, role, previewUrl) => {
         setItems((prev) =>
-          prev.map((it) =>
-            it.id === id
-              ? { ...it, photos: [...it.photos.filter((p) => p.role !== role), { role, previewUrl }] }
-              : it,
-          ),
+          prev.map((it) => {
+            if (it.id !== id) return it;
+            // 正面は1枚のみ（既存を置き換え）。追加写真は何枚でも足せる。
+            const kept = role === "main" ? it.photos.filter((p) => p.role !== "main") : it.photos;
+            return { ...it, photos: [...kept, { id: nextPhotoId(), role, previewUrl }] };
+          }),
         );
       },
-      removePhoto: (id, role) => {
+      removePhoto: (id, photoId) => {
         setItems((prev) =>
-          prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.role !== role) } : it)),
+          prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)),
         );
       },
     }),

@@ -37,11 +37,12 @@ create table items (
   unique (store_id, mgmt_no)
 );
 
--- 写真（採寸メイン＋背面・襟・タグ・ダメージ）。0枚でも登録可
+-- 写真（正面=main は採寸トリガーとして特別扱い。それ以外は撮る/撮らないが商品次第なので
+-- 背面・タグ・襟元…のような固定カテゴリは設けず、sub として自由に何枚でも追加できる）。0枚でも登録可
 create table item_photos (
   id uuid primary key default gen_random_uuid(),
   item_id uuid not null references items (id) on delete cascade,
-  role text not null check (role in ('main', 'back', 'collar', 'tag', 'damage')),
+  role text not null check (role in ('main', 'sub')),
   storage_path text not null,
   width integer,
   height integer,
