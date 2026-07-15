@@ -1,0 +1,9 @@
+name = "clothes-check-worker"
+main = "src/index.ts"
+compatibility_date = "2026-07-16"
+
+[vars]
+SQUARE_ENV = "sandbox"
+
+# 秘密情報は `wrangler secret put SQUARE_ACCESS_TOKEN` 等で登録する（このファイルには書かない）。
+# ローカル開発では .dev.vars（.dev.vars.example を参照、gitignore対象）を使う。

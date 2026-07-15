@@ -1,0 +1,12 @@
+{
+  "name": "clothes-check",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @clothes-check/web dev",
+    "dev:worker": "pnpm --filter @clothes-check/worker dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
