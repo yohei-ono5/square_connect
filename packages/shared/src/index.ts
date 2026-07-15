@@ -45,3 +45,39 @@ export type MeasurementResult = {
   sleeveLengthCm: number;
   confidence: number;
 };
+
+export const CONDITION_LABELS: Record<NonNullable<Condition>, string> = {
+  S: "新品未使用",
+  A: "美品・数回使用・ほとんど使用感がない",
+  B: "良品・多少の使用感がある",
+  C: "通常使用に伴う使用感がある",
+  D: "全体的に使用感がある・傷汚れがある",
+};
+
+// Square側の商品説明・アプリの説明文プレビュー両方から使う。未設定の項目は行ごと省略する。
+export function buildTitle(item: Pick<Item, "title" | "mgmtNo">): string {
+  return `${item.title} ${item.mgmtNo}`;
+}
+
+export function buildDescription(
+  item: Pick<Item, "title" | "mgmtNo" | "size" | "condition" | "measurements">,
+): string {
+  const lines: string[] = [buildTitle(item), ""];
+
+  const m = item.measurements;
+  const hasAnyMeasurement = m != null && Object.values(m).some((v) => v != null);
+  if (item.size != null || hasAnyMeasurement) {
+    lines.push("▪️商品サイズ（平置き実寸−cm−）");
+    if (item.size != null) lines.push(`SIZE：${item.size}`);
+    if (m?.shoulderCm != null) lines.push(`肩幅：${m.shoulderCm}cm`);
+    if (m?.chestCm != null) lines.push(`身幅：${m.chestCm}cm`);
+    if (m?.lengthCm != null) lines.push(`着丈：${m.lengthCm}cm`);
+    if (m?.sleeveCm != null) lines.push(`袖丈：${m.sleeveCm}cm`);
+    if (hasAnyMeasurement) lines.push("※多少の誤差はご了承ください");
+    lines.push("");
+  }
+
+  lines.push(`・コンディション：${item.condition ? CONDITION_LABELS[item.condition] : "未設定（後日追記）"}`);
+
+  return lines.join("\n");
+}
