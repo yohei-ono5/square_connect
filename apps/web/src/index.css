@@ -269,6 +269,39 @@ h1 {
   margin: 0 0 8px;
 }
 
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stat-card {
+  background: var(--surface-muted);
+  border-radius: var(--radius);
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+
 .footer-bar {
   display: flex;
   gap: 8px;
