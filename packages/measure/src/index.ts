@@ -6,7 +6,7 @@ export type MeasureGarmentInput = {
   matProfileId: string;
 };
 
-// 以下は未実装のスタブ。ロジックは ../../../mvp_prototype.html から移植する（ファイル自体は改修せず参照のみ）。
+// 以下は未実装のスタブ。ロジックは ../../../docs/mvp_prototype.html から移植する（ファイル自体は改修せず参照のみ）。
 
 // mvp_prototype.html の AR.Dictionary / AR.Detector を移植する
 export function detectMarkers(_imageDataUrl: string): unknown {
