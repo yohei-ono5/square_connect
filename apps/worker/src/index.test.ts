@@ -52,7 +52,7 @@ describe("POST /api/items/:id/register-to-square", () => {
     expect(await response.json()).toMatchObject({ error: "sku_already_exists" });
   });
 
-  it("creates a location-hidden JPY item after checking the SKU", async () => {
+  it("creates a dashboard-visible JPY item after checking the SKU", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(squareResponse({ objects: [] }))
@@ -94,12 +94,12 @@ describe("POST /api/items/:id/register-to-square", () => {
     expect(JSON.parse(String(upsertInit?.body))).toMatchObject({
       idempotency_key: "clothes-check-item-7d61",
       object: {
-        present_at_all_locations: false,
+        present_at_all_locations: true,
         item_data: {
           name: "ディズニー Tシャツ T0002",
           variations: [
             {
-              present_at_all_locations: false,
+              present_at_all_locations: true,
               item_variation_data: {
                 sku: "T0002",
                 price_money: { amount: 3000, currency: "JPY" },

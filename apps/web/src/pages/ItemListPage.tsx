@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { isDetailComplete, useItems, type MockItem } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
@@ -17,10 +17,12 @@ function matchesQuery(item: MockItem, query: string): boolean {
 }
 
 export function ItemListPage() {
-  const { items } = useItems();
+  const { items, deleteItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const stats = useMemo(() => {
     const incomplete = items.filter((it) => !isDetailComplete(it)).length;
@@ -41,14 +43,66 @@ export function ItemListPage() {
     return filtered;
   }, [items, query, statusFilter, sortKey]);
 
+  useEffect(() => {
+    const visibleIds = new Set(visibleItems.map((item) => item.id));
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleItems]);
+
+  function toggleSelectionMode() {
+    setSelectionMode((current) => !current);
+    setSelectedIds(new Set());
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function handleBulkDelete() {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    if (!window.confirm(`選択した${count}件を下書き一覧から削除しますか？`)) return;
+    selectedIds.forEach((id) => deleteItem(id));
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }
+
   return (
     <div className="screen">
       <div className="header">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h1>下書き一覧</h1>
-          <Link to="/items/new" className="btn btn-primary">
-            + 新規登録
-          </Link>
+          <div className="header-actions">
+            {selectionMode ? (
+              <>
+                <button type="button" className="btn" onClick={toggleSelectionMode}>
+                  キャンセル
+                </button>
+                <button type="button" className="btn btn-danger" disabled={selectedIds.size === 0} onClick={handleBulkDelete}>
+                  削除
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn" onClick={toggleSelectionMode} disabled={visibleItems.length === 0}>
+                  選択
+                </button>
+                <Link to="/items/new" className="btn btn-primary">
+                  + 新規登録
+                </Link>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -103,8 +157,25 @@ export function ItemListPage() {
         <ul className="list">
           {visibleItems.map((item) => (
             <li key={item.id}>
-              <Link to={`/items/${item.id}`} className="list-item">
-                <div className="list-item-row">
+              <div className={`list-item ${selectionMode ? "selecting" : ""}`}>
+                {selectionMode && (
+                  <label className="select-check" aria-label={`${item.title || item.mgmtNo}を選択`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(item.id)}
+                      onChange={() => toggleSelected(item.id)}
+                    />
+                  </label>
+                )}
+                <Link
+                  to={`/items/${item.id}`}
+                  className="list-item-main"
+                  onClick={(e) => {
+                    if (!selectionMode) return;
+                    e.preventDefault();
+                    toggleSelected(item.id);
+                  }}
+                >
                   <div>
                     <p style={{ margin: 0, fontSize: 14 }}>{item.title || "（商品名未設定）"}</p>
                     <p className="subtitle">
@@ -112,8 +183,8 @@ export function ItemListPage() {
                     </p>
                   </div>
                   <StatusBadge item={item} />
-                </div>
-              </Link>
+                </Link>
+              </div>
             </li>
           ))}
         </ul>

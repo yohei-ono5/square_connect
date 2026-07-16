@@ -5,17 +5,21 @@ import type { Item } from "@clothes-check/shared";
 // 違うため、背面・タグ・襟元…のような固定カテゴリを設けず「追加写真」として自由に足せる。
 export type PhotoRole = "main" | "sub";
 export type MockPhoto = { id: string; role: PhotoRole; previewUrl: string };
+export type MeasurePointKey = "shoulderL" | "shoulderR" | "pitL" | "pitR" | "collar" | "hem" | "cuffL";
+export type MeasurePoint = { x: number; y: number };
+export type MeasurePoints = Record<MeasurePointKey, MeasurePoint>;
 
 // Supabaseに繋ぐまでの仮のモデル。item_photosはDBでは別テーブルだが、
 // ここではデモ用にItemへ持たせている。
-export type MockItem = Item & { photos: MockPhoto[] };
+export type MockItem = Item & { photos: MockPhoto[]; measurePoints?: MeasurePoints };
 
-export type QuickRegisterInput = { title: string; price: number };
+export type QuickRegisterInput = { title: string; price: number; photoPreviewUrl?: string };
 
 type ItemsContextValue = {
   items: MockItem[];
   getItem: (id: string) => MockItem | undefined;
   addItem: (input: QuickRegisterInput) => MockItem;
+  deleteItem: (id: string) => void;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   addPhoto: (id: string, role: PhotoRole, previewUrl: string) => void;
   removePhoto: (id: string, photoId: string) => void;
@@ -97,11 +101,15 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         const item = makeItem({
           title: input.title,
           price: input.price,
-          // 実装後はここでWorkerのSKU重複チェック→Square非公開作成を呼ぶ。今はモックなので即Square下書き扱い。
-          squareObjectId: `sq-mock-${idCounter}`,
+          photos: input.photoPreviewUrl
+            ? [{ id: nextPhotoId(), role: "main", previewUrl: input.photoPreviewUrl }]
+            : [],
         });
         setItems((prev) => [item, ...prev]);
         return item;
+      },
+      deleteItem: (id) => {
+        setItems((prev) => prev.filter((it) => it.id !== id));
       },
       updateItem: (id, patch) => {
         setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));

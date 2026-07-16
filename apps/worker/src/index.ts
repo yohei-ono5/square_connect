@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { RegisterToSquareInputSchema } from "@clothes-check/shared";
 import { DuplicateSkuError, registerItemInSquare, SquareApiError } from "./square";
 
@@ -8,6 +9,15 @@ type Bindings = {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+app.use(
+  "/api/*",
+  cors({
+    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    allowMethods: ["POST", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+  }),
+);
 
 app.get("/health", (c) => c.json({ ok: true }));
 

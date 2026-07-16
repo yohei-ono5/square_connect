@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@clothes-check/shared";
-import { useItems, type PhotoRole } from "../store/ItemsContext";
+import { useItems, type MeasurePointKey, type MeasurePoints, type PhotoRole } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
@@ -15,12 +15,60 @@ const TABS: { key: TabKey; label: string }[] = [
 // mvp_prototype.html の実測値。packages/measure が実装されるまでの仮の自動採寸結果。
 const MOCK_MEASUREMENT = { shoulderCm: 44.9, chestCm: 51.0, lengthCm: 67.4, sleeveCm: 17.1 };
 
+const DEFAULT_MEASURE_POINTS: MeasurePoints = {
+  shoulderL: { x: 34, y: 30 },
+  shoulderR: { x: 66, y: 30 },
+  pitL: { x: 28, y: 46 },
+  pitR: { x: 72, y: 46 },
+  collar: { x: 50, y: 24 },
+  hem: { x: 50, y: 82 },
+  cuffL: { x: 18, y: 49 },
+};
+
+const POINT_LABELS: Record<MeasurePointKey, string> = {
+  shoulderL: "左肩",
+  shoulderR: "右肩",
+  pitL: "左脇",
+  pitR: "右脇",
+  collar: "首元",
+  hem: "裾",
+  cuffL: "袖先",
+};
+
+function pointDistance(points: MeasurePoints, from: MeasurePointKey, to: MeasurePointKey): number {
+  const a = points[from];
+  const b = points[to];
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function calculateMeasurements(points: MeasurePoints) {
+  return {
+    shoulderCm: Number(
+      ((pointDistance(points, "shoulderL", "shoulderR") / pointDistance(DEFAULT_MEASURE_POINTS, "shoulderL", "shoulderR")) *
+        MOCK_MEASUREMENT.shoulderCm).toFixed(1),
+    ),
+    chestCm: Number(
+      ((pointDistance(points, "pitL", "pitR") / pointDistance(DEFAULT_MEASURE_POINTS, "pitL", "pitR")) *
+        MOCK_MEASUREMENT.chestCm).toFixed(1),
+    ),
+    lengthCm: Number(
+      ((pointDistance(points, "collar", "hem") / pointDistance(DEFAULT_MEASURE_POINTS, "collar", "hem")) *
+        MOCK_MEASUREMENT.lengthCm).toFixed(1),
+    ),
+    sleeveCm: Number(
+      ((pointDistance(points, "shoulderL", "cuffL") / pointDistance(DEFAULT_MEASURE_POINTS, "shoulderL", "cuffL")) *
+        MOCK_MEASUREMENT.sleeveCm).toFixed(1),
+    ),
+  };
+}
+
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { getItem, updateItem, addPhoto, removePhoto } = useItems();
   const item = id ? getItem(id) : undefined;
   const [tab, setTab] = useState<TabKey>("photo");
   const [pendingRole, setPendingRole] = useState<PhotoRole | null>(null);
+  const [activePoint, setActivePoint] = useState<MeasurePointKey | null>(null);
   const [measuring, setMeasuring] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -37,6 +85,7 @@ export function ItemDetailPage() {
       </div>
     );
   }
+  const currentItem = item;
 
   function showToast(message: string) {
     setToast(message);
@@ -61,13 +110,32 @@ export function ItemDetailPage() {
     if (!id) return;
     setMeasuring(true);
     setTimeout(() => {
-      updateItem(id, { measurements: MOCK_MEASUREMENT });
+      updateItem(id, { measurements: MOCK_MEASUREMENT, measurePoints: DEFAULT_MEASURE_POINTS });
       setMeasuring(false);
     }, 600);
   }
 
+  function updateMeasurePoint(key: MeasurePointKey, clientX: number, clientY: number, element: HTMLDivElement) {
+    if (!id) return;
+    const rect = element.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
+    const nextPoints = { ...(currentItem.measurePoints ?? DEFAULT_MEASURE_POINTS), [key]: { x, y } };
+    updateItem(id, { measurePoints: nextPoints, measurements: calculateMeasurements(nextPoints) });
+  }
+
+  function handleMeasureStagePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!activePoint) return;
+    updateMeasurePoint(activePoint, e.clientX, e.clientY, e.currentTarget);
+  }
+
+  function endPointDrag() {
+    setActivePoint(null);
+  }
+
   const mainPhoto = item.photos.find((p) => p.role === "main");
   const subPhotos = item.photos.filter((p) => p.role === "sub");
+  const measurePoints = item.measurePoints ?? DEFAULT_MEASURE_POINTS;
 
   return (
     <div className="screen">
@@ -180,39 +248,102 @@ export function ItemDetailPage() {
               </div>
 
               {item.measurements && (
-                <table className="measure-table">
-                  <tbody>
-                    {(
-                      [
-                        ["着丈", "lengthCm"],
-                        ["身幅", "chestCm"],
-                        ["肩幅", "shoulderCm"],
-                        ["袖丈", "sleeveCm"],
-                      ] as const
-                    ).map(([label, key]) => (
-                      <tr key={key}>
-                        <td style={{ color: "var(--text-secondary)" }}>{label}</td>
-                        <td style={{ textAlign: "right" }}>
-                          <input
-                            className="input"
-                            style={{ width: 90, textAlign: "right", display: "inline-block" }}
-                            type="number"
-                            step="0.1"
-                            value={item.measurements![key] ?? ""}
-                            onChange={(e) =>
-                              updateItem(id!, {
-                                measurements: { ...item.measurements!, [key]: e.target.value === "" ? null : Number(e.target.value) },
-                              })
-                            }
-                          />{" "}
-                          cm
-                        </td>
-                      </tr>
+                <>
+                  <div
+                    className="measure-stage"
+                    onPointerMove={handleMeasureStagePointerMove}
+                    onPointerUp={endPointDrag}
+                    onPointerCancel={endPointDrag}
+                    onPointerLeave={endPointDrag}
+                  >
+                    <img src={mainPhoto.previewUrl} alt="採寸用正面写真" />
+                    <svg className="measure-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <line
+                        x1={measurePoints.shoulderL.x}
+                        y1={measurePoints.shoulderL.y}
+                        x2={measurePoints.shoulderR.x}
+                        y2={measurePoints.shoulderR.y}
+                        className="measure-line shoulder"
+                      />
+                      <line
+                        x1={measurePoints.pitL.x}
+                        y1={measurePoints.pitL.y}
+                        x2={measurePoints.pitR.x}
+                        y2={measurePoints.pitR.y}
+                        className="measure-line chest"
+                      />
+                      <line
+                        x1={measurePoints.collar.x}
+                        y1={measurePoints.collar.y}
+                        x2={measurePoints.hem.x}
+                        y2={measurePoints.hem.y}
+                        className="measure-line length"
+                      />
+                      <line
+                        x1={measurePoints.shoulderL.x}
+                        y1={measurePoints.shoulderL.y}
+                        x2={measurePoints.cuffL.x}
+                        y2={measurePoints.cuffL.y}
+                        className="measure-line sleeve"
+                      />
+                    </svg>
+                    {(Object.keys(measurePoints) as MeasurePointKey[]).map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`measure-point ${activePoint === key ? "active" : ""}`}
+                        style={{ left: `${measurePoints[key].x}%`, top: `${measurePoints[key].y}%` }}
+                        aria-label={`${POINT_LABELS[key]}の位置`}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          setActivePoint(key);
+                          updateMeasurePoint(key, e.clientX, e.clientY, e.currentTarget.closest(".measure-stage") as HTMLDivElement);
+                        }}
+                        onPointerMove={(e) => {
+                          if (activePoint !== key) return;
+                          updateMeasurePoint(key, e.clientX, e.clientY, e.currentTarget.closest(".measure-stage") as HTMLDivElement);
+                        }}
+                        onPointerUp={endPointDrag}
+                        onPointerCancel={endPointDrag}
+                      />
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+
+                  <table className="measure-table">
+                    <tbody>
+                      {(
+                        [
+                          ["着丈", "lengthCm"],
+                          ["身幅", "chestCm"],
+                          ["肩幅", "shoulderCm"],
+                          ["袖丈", "sleeveCm"],
+                        ] as const
+                      ).map(([label, key]) => (
+                        <tr key={key}>
+                          <td style={{ color: "var(--text-secondary)" }}>{label}</td>
+                          <td style={{ textAlign: "right" }}>
+                            <input
+                              className="input"
+                              style={{ width: 90, textAlign: "right", display: "inline-block" }}
+                              type="number"
+                              step="0.1"
+                              value={item.measurements![key] ?? ""}
+                              onChange={(e) =>
+                                updateItem(id!, {
+                                  measurements: { ...item.measurements!, [key]: e.target.value === "" ? null : Number(e.target.value) },
+                                })
+                              }
+                            />{" "}
+                            cm
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
               )}
-              <p className="hint">数値を直接編集すると手動で修正できます。</p>
+              <p className="hint">画像上の点をドラッグして位置を確認・調整できます。数値を直接編集することもできます。</p>
             </>
           )}
         </div>

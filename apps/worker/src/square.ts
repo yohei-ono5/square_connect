@@ -128,8 +128,9 @@ export async function registerItemInSquare(
       object: {
         type: "ITEM",
         id: "#item",
-        present_at_all_locations: false,
-        present_at_location_ids: [],
+        // Sandbox Dashboardで目視確認しやすいよう、まずは全ロケーション表示で作成する。
+        // 本番運用の「非公開作成→確認→公開」は、公開フロー確定時に切り替える。
+        present_at_all_locations: true,
         item_data: {
           name: buildTitle(input),
           product_type: "REGULAR",
@@ -137,8 +138,7 @@ export async function registerItemInSquare(
             {
               type: "ITEM_VARIATION",
               id: "#variation",
-              present_at_all_locations: false,
-              present_at_location_ids: [],
+              present_at_all_locations: true,
               item_variation_data: {
                 item_id: "#item",
                 name: "通常",
