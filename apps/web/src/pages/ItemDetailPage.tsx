@@ -296,19 +296,19 @@ export function ItemDetailPage() {
       <div className="footer-bar">
         <button
           type="button"
-          className="btn"
-          style={{ flex: 1 }}
-          onClick={() => showToast("モック環境のため実際のSquareへは接続していません")}
-        >
-          Squareで開く
-        </button>
-        <button
-          type="button"
           className="btn btn-primary"
           style={{ flex: 1 }}
           onClick={() => showToast("保存しました")}
         >
-          変更を保存
+          下書き保存
+        </button>
+        <button
+          type="button"
+          className="btn"
+          style={{ flex: 1 }}
+          onClick={() => showToast("モック環境のため実際のSquareへは登録されません")}
+        >
+          Squareに登録
         </button>
       </div>
       {toast && <p className="toast">{toast}</p>}
