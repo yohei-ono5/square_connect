@@ -16,7 +16,14 @@ export function QuickRegisterPage() {
 
   const canSubmit = title.trim().length > 0 && price.trim().length > 0 && !submitting;
 
-  async function handleSubmit(e: FormEvent) {
+  function handleSaveDraft(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    addItem({ title: title.trim(), price: Number(price), photoPreviewUrl: photoPreviewUrl ?? undefined });
+    navigate("/");
+  }
+
+  async function handleRegisterToSquare(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
@@ -44,6 +51,7 @@ export function QuickRegisterPage() {
       updateItem(item.id, { squareObjectId: result.squareObjectId });
       navigate("/");
     } catch (error) {
+      // 商品自体はローカルに作成済みなので、失敗しても下書き一覧からは見える。再登録は詳細編集画面の「Squareに登録」から。
       setErrorMessage(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
       setSubmitting(false);
     }
@@ -72,7 +80,7 @@ export function QuickRegisterPage() {
         <p className="subtitle">商品名と金額でSquareへ非公開登録します。写真は任意で追加できます。</p>
       </div>
 
-      <form className="content" onSubmit={handleSubmit}>
+      <form className="content" onSubmit={(e) => e.preventDefault()}>
         <div className="field">
           <label htmlFor="title">商品名</label>
           <input
@@ -125,9 +133,14 @@ export function QuickRegisterPage() {
             </button>
           )}
         </div>
-        <button type="submit" className="btn btn-primary btn-block" disabled={!canSubmit}>
-          {submitting ? "登録中…" : "登録"}
-        </button>
+        <div className="footer-bar" style={{ padding: 0, border: "none" }}>
+          <button type="button" className="btn btn-primary" style={{ flex: 1 }} onClick={handleSaveDraft} disabled={!canSubmit}>
+            下書き保存
+          </button>
+          <button type="button" className="btn" style={{ flex: 1 }} onClick={handleRegisterToSquare} disabled={!canSubmit}>
+            {submitting ? "登録中…" : "Squareに登録"}
+          </button>
+        </div>
         {errorMessage && <p className="form-error">{errorMessage}</p>}
         <p className="hint">
           対象（メンズ/レディース/ユニセックス）・カテゴリ・サイズ・写真・採寸・コンディションはあとから商品詳細編集画面で追加できます。

@@ -28,6 +28,27 @@ const POINT_LABELS: Record<MeasurePointKey, string> = {
   cuffL: "袖先",
 };
 
+type MeasureLineKey = "length" | "chest" | "shoulder" | "sleeve";
+
+// index.css の .measure-line.{key} と同じ色。テーブルの色見本・画像上のラベルの両方から参照する。
+const MEASURE_LINE_COLORS: Record<MeasureLineKey, string> = {
+  length: "#4f9a4a",
+  chest: "#d6a21f",
+  shoulder: "#ce3b2b",
+  sleeve: "#d57a2b",
+};
+
+const MEASURE_ROWS: { label: string; key: "lengthCm" | "chestCm" | "shoulderCm" | "sleeveCm"; lineKey: MeasureLineKey }[] = [
+  { label: "着丈", key: "lengthCm", lineKey: "length" },
+  { label: "身幅", key: "chestCm", lineKey: "chest" },
+  { label: "肩幅", key: "shoulderCm", lineKey: "shoulder" },
+  { label: "袖丈", key: "sleeveCm", lineKey: "sleeve" },
+];
+
+function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { getItem, updateItem, addPhoto, removePhoto } = useItems();
@@ -106,6 +127,15 @@ export function ItemDetailPage() {
   const mainPhoto = item.photos.find((p) => p.role === "main");
   const subPhotos = item.photos.filter((p) => p.role === "sub");
   const measurePoints = item.measurePoints ?? DEFAULT_MEASURE_POINTS;
+
+  // 各線の中点。ラベルはSVG内ではなくHTML要素として重ねる
+  // （viewBoxをpreserveAspectRatio="none"で非一様に拡大するため、SVG text だと文字が歪む）。
+  const lineMidpoints: Record<MeasureLineKey, { x: number; y: number }> = {
+    shoulder: midpoint(measurePoints.shoulderL, measurePoints.shoulderR),
+    chest: midpoint(measurePoints.pitL, measurePoints.pitR),
+    length: midpoint(measurePoints.collar, measurePoints.hem),
+    sleeve: midpoint(measurePoints.shoulderL, measurePoints.cuffL),
+  };
 
   return (
     <div className="screen">
@@ -288,20 +318,33 @@ export function ItemDetailPage() {
                         onPointerCancel={endPointDrag}
                       />
                     ))}
+                    {MEASURE_ROWS.map(({ label, lineKey }) => (
+                      <span
+                        key={lineKey}
+                        className="measure-line-label"
+                        style={{
+                          left: `${lineMidpoints[lineKey].x}%`,
+                          top: `${lineMidpoints[lineKey].y}%`,
+                          color: MEASURE_LINE_COLORS[lineKey],
+                        }}
+                      >
+                        {label}
+                      </span>
+                    ))}
                   </div>
 
                   <table className="measure-table">
                     <tbody>
-                      {(
-                        [
-                          ["着丈", "lengthCm"],
-                          ["身幅", "chestCm"],
-                          ["肩幅", "shoulderCm"],
-                          ["袖丈", "sleeveCm"],
-                        ] as const
-                      ).map(([label, key]) => (
+                      {MEASURE_ROWS.map(({ label, key, lineKey }) => (
                         <tr key={key}>
-                          <td style={{ color: "var(--text-secondary)" }}>{label}</td>
+                          <td style={{ color: "var(--text-secondary)" }}>
+                            <span
+                              className="measure-color-dot"
+                              style={{ background: MEASURE_LINE_COLORS[lineKey] }}
+                              aria-hidden="true"
+                            />
+                            {label}
+                          </td>
                           <td style={{ textAlign: "right" }}>
                             <input
                               className="input"

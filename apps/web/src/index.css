@@ -494,6 +494,26 @@ h1 {
   transform: translate(-50%, -50%) scale(1.12);
 }
 
+.measure-line-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.measure-color-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
 .description-preview {
   background: var(--surface-muted);
   border-radius: var(--radius);
