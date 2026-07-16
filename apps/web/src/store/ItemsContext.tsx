@@ -1,13 +1,13 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { Item } from "@clothes-check/shared";
+import type { MeasurePoints } from "@clothes-check/measure";
+
+export type { MeasurePointKey, MeasurePoint, MeasurePoints } from "@clothes-check/measure";
 
 // 正面写真だけが自動採寸のトリガーになる特別な役割。それ以外は撮る/撮らないが商品によって
 // 違うため、背面・タグ・襟元…のような固定カテゴリを設けず「追加写真」として自由に足せる。
 export type PhotoRole = "main" | "sub";
 export type MockPhoto = { id: string; role: PhotoRole; previewUrl: string };
-export type MeasurePointKey = "shoulderL" | "shoulderR" | "pitL" | "pitR" | "collar" | "hem" | "cuffL";
-export type MeasurePoint = { x: number; y: number };
-export type MeasurePoints = Record<MeasurePointKey, MeasurePoint>;
 
 // Supabaseに繋ぐまでの仮のモデル。item_photosはDBでは別テーブルだが、
 // ここではデモ用にItemへ持たせている。

@@ -1,7 +1,13 @@
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@clothes-check/shared";
-import { useItems, type MeasurePointKey, type MeasurePoints, type PhotoRole } from "../store/ItemsContext";
+import {
+  calculateMeasurements,
+  detectInitialMeasurePoints,
+  DEFAULT_MEASURE_POINTS,
+  type MeasurePointKey,
+} from "@clothes-check/measure";
+import { useItems, type PhotoRole } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
@@ -11,19 +17,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "basic", label: "基本情報" },
   { key: "desc", label: "説明文" },
 ];
-
-// mvp_prototype.html の実測値。packages/measure が実装されるまでの仮の自動採寸結果。
-const MOCK_MEASUREMENT = { shoulderCm: 44.9, chestCm: 51.0, lengthCm: 67.4, sleeveCm: 17.1 };
-
-const DEFAULT_MEASURE_POINTS: MeasurePoints = {
-  shoulderL: { x: 34, y: 30 },
-  shoulderR: { x: 66, y: 30 },
-  pitL: { x: 28, y: 46 },
-  pitR: { x: 72, y: 46 },
-  collar: { x: 50, y: 24 },
-  hem: { x: 50, y: 82 },
-  cuffL: { x: 18, y: 49 },
-};
 
 const POINT_LABELS: Record<MeasurePointKey, string> = {
   shoulderL: "左肩",
@@ -35,33 +28,6 @@ const POINT_LABELS: Record<MeasurePointKey, string> = {
   cuffL: "袖先",
 };
 
-function pointDistance(points: MeasurePoints, from: MeasurePointKey, to: MeasurePointKey): number {
-  const a = points[from];
-  const b = points[to];
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function calculateMeasurements(points: MeasurePoints) {
-  return {
-    shoulderCm: Number(
-      ((pointDistance(points, "shoulderL", "shoulderR") / pointDistance(DEFAULT_MEASURE_POINTS, "shoulderL", "shoulderR")) *
-        MOCK_MEASUREMENT.shoulderCm).toFixed(1),
-    ),
-    chestCm: Number(
-      ((pointDistance(points, "pitL", "pitR") / pointDistance(DEFAULT_MEASURE_POINTS, "pitL", "pitR")) *
-        MOCK_MEASUREMENT.chestCm).toFixed(1),
-    ),
-    lengthCm: Number(
-      ((pointDistance(points, "collar", "hem") / pointDistance(DEFAULT_MEASURE_POINTS, "collar", "hem")) *
-        MOCK_MEASUREMENT.lengthCm).toFixed(1),
-    ),
-    sleeveCm: Number(
-      ((pointDistance(points, "shoulderL", "cuffL") / pointDistance(DEFAULT_MEASURE_POINTS, "shoulderL", "cuffL")) *
-        MOCK_MEASUREMENT.sleeveCm).toFixed(1),
-    ),
-  };
-}
-
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { getItem, updateItem, addPhoto, removePhoto } = useItems();
@@ -70,6 +36,7 @@ export function ItemDetailPage() {
   const [pendingRole, setPendingRole] = useState<PhotoRole | null>(null);
   const [activePoint, setActivePoint] = useState<MeasurePointKey | null>(null);
   const [measuring, setMeasuring] = useState(false);
+  const [detected, setDetected] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -106,13 +73,16 @@ export function ItemDetailPage() {
     setPendingRole(null);
   }
 
-  function runAutoMeasure() {
-    if (!id) return;
+  async function runAutoMeasure() {
+    if (!id || !mainPhoto) return;
     setMeasuring(true);
-    setTimeout(() => {
-      updateItem(id, { measurements: MOCK_MEASUREMENT, measurePoints: DEFAULT_MEASURE_POINTS });
+    try {
+      const { points, detected: matched } = await detectInitialMeasurePoints(mainPhoto.previewUrl);
+      updateItem(id, { measurePoints: points, measurements: calculateMeasurements(points) });
+      setDetected(matched);
+    } finally {
       setMeasuring(false);
-    }, 600);
+    }
   }
 
   function updateMeasurePoint(key: MeasurePointKey, clientX: number, clientY: number, element: HTMLDivElement) {
@@ -235,15 +205,25 @@ export function ItemDetailPage() {
                 <div style={{ flex: 1 }}>
                   {item.measurements ? (
                     <>
-                      <p style={{ fontSize: 13, margin: 0 }}>正面写真から自動計測済み</p>
-                      <p style={{ fontSize: 12, color: "var(--accent)", margin: "2px 0 0" }}>信頼度 高</p>
+                      <p style={{ fontSize: 13, margin: 0 }}>
+                        {detected === false ? "Tシャツを検出できませんでした" : "Tシャツを検出して仮配置しました"}
+                      </p>
+                      <p
+                        style={{
+                          fontSize: 12,
+                          color: detected === false ? "var(--warning-text)" : "var(--accent)",
+                          margin: "2px 0 0",
+                        }}
+                      >
+                        {detected === false ? "中央に仮配置・要確認" : "検出精度は目安・要確認"}
+                      </p>
                     </>
                   ) : (
-                    <p style={{ fontSize: 13, margin: 0 }}>{measuring ? "計測中…" : "まだ計測していません"}</p>
+                    <p style={{ fontSize: 13, margin: 0 }}>{measuring ? "検出中…" : "まだ計測していません"}</p>
                   )}
                 </div>
                 <button type="button" className="btn" onClick={runAutoMeasure} disabled={measuring}>
-                  {item.measurements ? "再計測" : "自動採寸を実行"}
+                  {item.measurements ? "再検出" : "自動検出を実行"}
                 </button>
               </div>
 
