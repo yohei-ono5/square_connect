@@ -54,7 +54,7 @@ function makeItem(overrides: Partial<MockItem>): MockItem {
     mgmtNo: nextMgmtNo(),
     title: "",
     price: 0,
-    brand: null,
+    gender: null,
     category: null,
     size: null,
     condition: null,
@@ -71,7 +71,7 @@ const seedItems: MockItem[] = [
   makeItem({
     title: "ディズニー Tシャツ",
     price: 3000,
-    brand: "ディズニー",
+    gender: "unisex",
     category: "キャラクターTシャツ",
     size: "XL",
     condition: "A",
@@ -139,7 +139,7 @@ export function isDetailComplete(item: MockItem): boolean {
     item.condition !== null &&
     item.measurements !== null &&
     item.photos.length > 0 &&
-    item.brand !== null &&
+    item.gender !== null &&
     item.category !== null &&
     item.size !== null
   );

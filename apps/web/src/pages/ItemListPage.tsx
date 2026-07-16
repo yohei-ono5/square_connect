@@ -12,7 +12,7 @@ function matchesQuery(item: MockItem, query: string): boolean {
   return (
     item.title.toLowerCase().includes(q) ||
     item.mgmtNo.toLowerCase().includes(q) ||
-    (item.brand ?? "").toLowerCase().includes(q)
+    (item.category ?? "").toLowerCase().includes(q)
   );
 }
 
@@ -73,7 +73,7 @@ export function ItemListPage() {
         <div className="filter-bar">
           <input
             className="input"
-            placeholder="商品名・ブランド・SKUで検索"
+            placeholder="商品名・カテゴリ・SKUで検索"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />

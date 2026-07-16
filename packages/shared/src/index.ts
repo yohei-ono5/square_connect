@@ -3,6 +3,18 @@ import { z } from "zod";
 export const ConditionSchema = z.enum(["S", "A", "B", "C", "D"]).nullable();
 export type Condition = z.infer<typeof ConditionSchema>;
 
+// S〜Dの表示順。説明文の凡例やコンディション選択肢の並びに使う。
+export const CONDITION_ORDER = ["S", "A", "B", "C", "D"] as const;
+
+export const GenderSchema = z.enum(["mens", "womens", "unisex"]).nullable();
+export type Gender = z.infer<typeof GenderSchema>;
+
+export const GENDER_LABELS: Record<NonNullable<Gender>, string> = {
+  mens: "メンズ",
+  womens: "レディース",
+  unisex: "ユニセックス",
+};
+
 export const ItemStatusSchema = z.enum(["draft", "confirmed", "pushed"]);
 export type ItemStatus = z.infer<typeof ItemStatusSchema>;
 
@@ -14,7 +26,7 @@ export const ItemSchema = z.object({
   mgmtNo: z.string(),
   title: z.string(),
   price: z.number().int().nonnegative(),
-  brand: z.string().nullable(),
+  gender: GenderSchema,
   category: z.string().nullable(),
   size: z.string().nullable(),
   condition: ConditionSchema,
@@ -37,6 +49,24 @@ export const QuickRegisterInputSchema = z.object({
   price: z.number().int().nonnegative(),
 });
 export type QuickRegisterInput = z.infer<typeof QuickRegisterInputSchema>;
+
+// SKU採番と下書き保存を終えた後、WorkerからSquareへ登録する際の入力。
+export const RegisterToSquareInputSchema = z
+  .object({
+    mgmtNo: z.string().trim().min(1).max(100),
+    title: z.string().trim().min(1).max(512),
+    price: z.number().int().nonnegative().safe(),
+  })
+  .refine(({ title, mgmtNo }) => `${title} ${mgmtNo}`.length <= 512, {
+    message: "Squareの商品名はSKUを含めて512文字以内にしてください",
+    path: ["title"],
+  });
+export type RegisterToSquareInput = z.infer<typeof RegisterToSquareInputSchema>;
+
+export type RegisterToSquareResult = {
+  squareObjectId: string;
+  squareVariationId: string;
+};
 
 export type MeasurementResult = {
   lengthCm: number;
@@ -77,7 +107,11 @@ export function buildDescription(
     lines.push("");
   }
 
-  lines.push(`・コンディション：${item.condition ? CONDITION_LABELS[item.condition] : "未設定（後日追記）"}`);
+  // ECサイトの説明文だけを見た人にも各ランクの意味が伝わるよう、選ばれたランクだけでなくS〜D全ての凡例を載せる。
+  lines.push(`■コンディション：${item.condition ?? "未設定（後日追記）"}`);
+  for (const rank of CONDITION_ORDER) {
+    lines.push(`${rank}：${CONDITION_LABELS[rank]}`);
+  }
 
   return lines.join("\n");
 }

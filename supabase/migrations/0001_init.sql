@@ -21,7 +21,7 @@ create table items (
   mgmt_no text not null,
   title text not null,
   price integer not null,
-  brand text,
+  gender text check (gender in ('mens', 'womens', 'unisex')),
   category text,
   size text,
   condition text check (condition in ('S', 'A', 'B', 'C', 'D')),

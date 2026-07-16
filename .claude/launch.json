@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@clothes-check/web", "dev"],
       "port": 5173
+    },
+    {
+      "name": "worker",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@clothes-check/worker", "dev", "--port", "8787"],
+      "port": 8787
     }
   ]
 }

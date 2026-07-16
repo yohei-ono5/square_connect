@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { CONDITION_LABELS, buildDescription, type Condition } from "@clothes-check/shared";
+import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@clothes-check/shared";
 import { useItems, type PhotoRole } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -221,14 +221,20 @@ export function ItemDetailPage() {
       {tab === "basic" && (
         <div className="content">
           <div className="field">
-            <label htmlFor="brand">ブランド</label>
-            <input
-              id="brand"
-              className="input"
-              placeholder="例：ディズニー"
-              value={item.brand ?? ""}
-              onChange={(e) => updateItem(id!, { brand: e.target.value || null })}
-            />
+            <label htmlFor="gender">対象</label>
+            <select
+              id="gender"
+              className="select"
+              value={item.gender ?? ""}
+              onChange={(e) => updateItem(id!, { gender: (e.target.value || null) as Gender })}
+            >
+              <option value="">未設定</option>
+              {(Object.keys(GENDER_LABELS) as (keyof typeof GENDER_LABELS)[]).map((key) => (
+                <option key={key} value={key}>
+                  {GENDER_LABELS[key]}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label htmlFor="category">カテゴリ</label>
