@@ -19,8 +19,9 @@ export function QuickRegisterPage() {
   function handleSaveDraft(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
-    addItem({ title: title.trim(), price: Number(price), photoPreviewUrl: photoPreviewUrl ?? undefined });
-    navigate("/");
+    const item = addItem({ title: title.trim(), price: Number(price), photoPreviewUrl: photoPreviewUrl ?? undefined });
+    // 時間に余裕があるスタッフはそのまま詳細編集画面で続きを入力できるよう、一覧ではなく詳細へ遷移する。
+    navigate(`/items/${item.id}`);
   }
 
   async function handleRegisterToSquare(e: FormEvent) {
@@ -49,7 +50,7 @@ export function QuickRegisterPage() {
       }
 
       updateItem(item.id, { squareObjectId: result.squareObjectId });
-      navigate("/");
+      navigate(`/items/${item.id}`);
     } catch (error) {
       // 商品自体はローカルに作成済みなので、失敗しても下書き一覧からは見える。再登録は詳細編集画面の「Squareに登録」から。
       setErrorMessage(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
