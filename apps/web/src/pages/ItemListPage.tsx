@@ -71,7 +71,7 @@ export function ItemListPage() {
   function handleBulkDelete() {
     const count = selectedIds.size;
     if (count === 0) return;
-    if (!window.confirm(`選択した${count}件を下書き一覧から削除しますか？`)) return;
+    if (!window.confirm(`選択した${count}件を商品一覧から削除しますか？`)) return;
     selectedIds.forEach((id) => deleteItem(id));
     setSelectedIds(new Set());
     setSelectionMode(false);
@@ -81,7 +81,7 @@ export function ItemListPage() {
     <div className="screen">
       <div className="header">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h1>下書き一覧</h1>
+          <h1>商品一覧</h1>
           <div className="header-actions">
             {selectionMode ? (
               <>

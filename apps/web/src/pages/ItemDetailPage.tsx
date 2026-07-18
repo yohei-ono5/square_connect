@@ -66,7 +66,7 @@ export function ItemDetailPage() {
       <div className="screen">
         <div className="header">
           <Link to="/" className="back-link">
-            ← 下書き一覧に戻る
+            ← 商品一覧に戻る
           </Link>
           <h1>商品が見つかりません</h1>
         </div>
@@ -143,7 +143,7 @@ export function ItemDetailPage() {
 
       <div className="header">
         <Link to="/" className="back-link">
-          ← 下書き一覧に戻る
+          ← 商品一覧に戻る
         </Link>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
           <div>

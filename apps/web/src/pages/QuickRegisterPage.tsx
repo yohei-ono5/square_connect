@@ -52,7 +52,7 @@ export function QuickRegisterPage() {
       updateItem(item.id, { squareObjectId: result.squareObjectId });
       navigate(`/items/${item.id}`);
     } catch (error) {
-      // 商品自体はローカルに作成済みなので、失敗しても下書き一覧からは見える。再登録は詳細編集画面の「Squareに登録」から。
+      // 商品自体はローカルに作成済みなので、失敗しても商品一覧からは見える。再登録は詳細編集画面の「Squareに登録」から。
       setErrorMessage(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
       setSubmitting(false);
     }
@@ -75,7 +75,7 @@ export function QuickRegisterPage() {
     <div className="screen">
       <div className="header">
         <Link to="/" className="back-link">
-          ← 下書き一覧に戻る
+          ← 商品一覧に戻る
         </Link>
         <h1>クイック登録</h1>
         <p className="subtitle">商品名と金額でSquareへ非公開登録します。写真は任意で追加できます。</p>
