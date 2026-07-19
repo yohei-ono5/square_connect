@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@clothes-check/shared";
 import {
@@ -51,15 +51,19 @@ function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
 
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { getItem, updateItem, addPhoto, removePhoto, isMgmtNoTaken } = useItems();
+  const { getItem, updateItem, addPhoto, removePhoto, isMgmtNoTaken, squareCategories, categoriesLoading, categoriesError, loadSquareCategories } = useItems();
   const item = id ? getItem(id) : undefined;
-  const [tab, setTab] = useState<TabKey>("photo");
+  const [tab, setTab] = useState<TabKey>("basic");
   const [pendingRole, setPendingRole] = useState<PhotoRole | null>(null);
   const [activePoint, setActivePoint] = useState<MeasurePointKey | null>(null);
   const [measuring, setMeasuring] = useState(false);
   const [detected, setDetected] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    loadSquareCategories();
+  }, [loadSquareCategories]);
 
   if (!item) {
     return (
@@ -415,13 +419,22 @@ export function ItemDetailPage() {
           </div>
           <div className="field">
             <label htmlFor="category">カテゴリ</label>
-            <input
+            <select
               id="category"
-              className="input"
-              placeholder="例：キャラクターTシャツ"
+              className="select"
               value={item.category ?? ""}
               onChange={(e) => updateItem(id!, { category: e.target.value || null })}
-            />
+              disabled={categoriesLoading}
+            >
+              <option value="">未設定</option>
+              {squareCategories?.map((cat) => (
+                <option key={cat.id} value={cat.name}>
+                  {cat.parentName ? `${cat.parentName} > ${cat.name}` : cat.name}
+                </option>
+              ))}
+            </select>
+            {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
+            {categoriesError && <p className="form-error">{categoriesError}</p>}
           </div>
           <div className="field">
             <label htmlFor="size">表記サイズ</label>

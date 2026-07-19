@@ -58,17 +58,18 @@ async function squareRequest<T>(
   path: string,
   body: unknown,
   fetcher: typeof fetch,
+  method: "POST" | "GET" = "POST",
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetcher(`${getBaseUrl(config.environment)}${path}`, {
-      method: "POST",
+      method,
       headers: {
         Authorization: `Bearer ${config.accessToken}`,
         "Content-Type": "application/json",
         "Square-Version": SQUARE_API_VERSION,
       },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new SquareApiError(0, [{ detail: "Could not reach Square API" }]);
@@ -164,4 +165,58 @@ export async function registerItemInSquare(
   }
 
   return { squareObjectId, squareVariationId };
+}
+
+type CatalogCategoryObject = {
+  id?: string;
+  category_data?: { name?: string; parent_category?: { id?: string } };
+};
+
+type ListCatalogResponse = {
+  objects?: CatalogCategoryObject[];
+  cursor?: string;
+  errors?: SquareError[];
+};
+
+export type SquareCategory = { id: string; name: string; parentName: string | null };
+
+// カテゴリはSquareのダッシュボードで設定済みのものを取得するだけで、アプリからは作成しない。
+// 階層（parent_category）がある場合は表示用に親カテゴリ名を添える。
+export async function listSquareCategories(
+  config: SquareConfig,
+  fetcher: typeof fetch = fetch,
+): Promise<SquareCategory[]> {
+  if (!config.accessToken) throw new Error("SQUARE_ACCESS_TOKEN is not configured");
+
+  const all: CatalogCategoryObject[] = [];
+  let cursor: string | undefined;
+  do {
+    const params = new URLSearchParams({ types: "CATEGORY" });
+    if (cursor) params.set("cursor", cursor);
+    const page = await squareRequest<ListCatalogResponse>(
+      config,
+      `/v2/catalog/list?${params.toString()}`,
+      undefined,
+      fetcher,
+      "GET",
+    );
+    all.push(...(page.objects ?? []));
+    cursor = page.cursor;
+  } while (cursor);
+
+  const nameById = new Map(all.map((obj) => [obj.id, obj.category_data?.name ?? ""]));
+
+  return all
+    .filter((obj): obj is CatalogCategoryObject & { id: string; category_data: { name: string } } =>
+      Boolean(obj.id && obj.category_data?.name),
+    )
+    .map((obj) => {
+      const parentId = obj.category_data.parent_category?.id;
+      return {
+        id: obj.id,
+        name: obj.category_data.name,
+        parentName: parentId ? (nameById.get(parentId) ?? null) : null,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "ja"));
 }

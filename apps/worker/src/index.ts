@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { RegisterToSquareInputSchema } from "@clothes-check/shared";
-import { DuplicateSkuError, registerItemInSquare, SquareApiError } from "./square";
+import { DuplicateSkuError, listSquareCategories, registerItemInSquare, SquareApiError } from "./square";
 
 type Bindings = {
   SQUARE_ACCESS_TOKEN: string;
@@ -14,7 +14,7 @@ app.use(
   "/api/*",
   cors({
     origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
-    allowMethods: ["POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Content-Type"],
   }),
 );
@@ -85,6 +85,24 @@ app.post("/api/items/:id/register-to-square", async (c) => {
       },
       500,
     );
+  }
+});
+
+app.get("/api/square/categories", async (c) => {
+  try {
+    const categories = await listSquareCategories({
+      accessToken: c.env.SQUARE_ACCESS_TOKEN,
+      environment: c.env.SQUARE_ENV,
+    });
+    return c.json({ categories });
+  } catch (error) {
+    if (error instanceof SquareApiError) {
+      console.error("Square category fetch failed", error.status, error.errors);
+      return c.json({ error: "square_api_error", message: "カテゴリの取得に失敗しました" }, 502);
+    }
+
+    console.error("Square category fetch failed", error);
+    return c.json({ error: "configuration_error", message: "Square連携の設定を確認してください" }, 500);
   }
 });
 

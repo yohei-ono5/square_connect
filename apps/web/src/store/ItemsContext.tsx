@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { Item } from "@clothes-check/shared";
 import type { MeasurePoints } from "@clothes-check/measure";
+import { WORKER_BASE_URL } from "../lib/config";
 
 export type { MeasurePointKey, MeasurePoint, MeasurePoints } from "@clothes-check/measure";
 
@@ -16,6 +17,9 @@ export type MockItem = Item & { photos: MockPhoto[]; measurePoints?: MeasurePoin
 // 管理番号（SKU）はスタッフの手入力。共有カウンタでの自動採番はやめた。
 export type QuickRegisterInput = { mgmtNo: string; title: string; price: number; photoPreviewUrl?: string };
 
+// Square側で設定済みのカテゴリ（parentNameは親カテゴリがある場合のみ、表示用に「親 > 子」を組み立てる）。
+export type SquareCategory = { id: string; name: string; parentName: string | null };
+
 type ItemsContextValue = {
   items: MockItem[];
   getItem: (id: string) => MockItem | undefined;
@@ -25,6 +29,10 @@ type ItemsContextValue = {
   addPhoto: (id: string, role: PhotoRole, previewUrl: string) => void;
   removePhoto: (id: string, photoId: string) => void;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
+  squareCategories: SquareCategory[] | null;
+  categoriesLoading: boolean;
+  categoriesError: string | null;
+  loadSquareCategories: () => void;
 };
 
 const ItemsContext = createContext<ItemsContextValue | null>(null);
@@ -94,6 +102,9 @@ function normalizeMgmtNo(mgmtNo: string): string {
 
 export function ItemsProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<MockItem[]>(seedItems);
+  const [squareCategories, setSquareCategories] = useState<SquareCategory[] | null>(null);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
 
   const value = useMemo<ItemsContextValue>(
     () => ({
@@ -136,8 +147,31 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       // ローカルの下書き同士の衝突もここで防ぐ）。
       isMgmtNoTaken: (mgmtNo, excludeId) =>
         items.some((it) => it.id !== excludeId && normalizeMgmtNo(it.mgmtNo) === normalizeMgmtNo(mgmtNo)),
+      squareCategories,
+      categoriesLoading,
+      categoriesError,
+      // カテゴリはSquare側で頻繁に変わるものではないため、セッション中に1回だけ取得してキャッシュする。
+      loadSquareCategories: () => {
+        if (squareCategories !== null || categoriesLoading) return;
+        setCategoriesLoading(true);
+        setCategoriesError(null);
+        fetch(`${WORKER_BASE_URL}/api/square/categories`)
+          .then(async (response) => {
+            const result = (await response.json().catch(() => null)) as
+              | { categories?: SquareCategory[]; message?: string }
+              | null;
+            if (!response.ok || !result?.categories) {
+              throw new Error(result?.message ?? "カテゴリの取得に失敗しました");
+            }
+            setSquareCategories(result.categories);
+          })
+          .catch((error: unknown) => {
+            setCategoriesError(error instanceof Error ? error.message : "カテゴリの取得に失敗しました");
+          })
+          .finally(() => setCategoriesLoading(false));
+      },
     }),
-    [items],
+    [items, squareCategories, categoriesLoading, categoriesError],
   );
 
   return <ItemsContext.Provider value={value}>{children}</ItemsContext.Provider>;

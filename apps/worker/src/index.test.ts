@@ -136,3 +136,54 @@ describe("POST /api/items/:id/register-to-square", () => {
     expect(await response.text()).not.toContain("secret detail");
   });
 });
+
+describe("GET /api/square/categories", () => {
+  it("follows pagination and resolves parent category names", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        squareResponse({
+          objects: [
+            { id: "cat-parent", category_data: { name: "Tシャツ" } },
+            { id: "cat-child", category_data: { name: "アニメTシャツ", parent_category: { id: "cat-parent" } } },
+          ],
+          cursor: "page-2",
+        }),
+      )
+      .mockResolvedValueOnce(
+        squareResponse({
+          objects: [{ id: "cat-other", category_data: { name: "バンドT" } }],
+        }),
+      );
+
+    const response = await app.request("/api/square/categories", { method: "GET" }, env);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      categories: [
+        { id: "cat-parent", name: "Tシャツ", parentName: null },
+        { id: "cat-child", name: "アニメTシャツ", parentName: "Tシャツ" },
+        { id: "cat-other", name: "バンドT", parentName: null },
+      ],
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/catalog/list?types=CATEGORY",
+    );
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/catalog/list?types=CATEGORY&cursor=page-2",
+    );
+  });
+
+  it("does not expose Square error details to the browser", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      squareResponse({ errors: [{ category: "AUTHENTICATION_ERROR", detail: "secret detail" }] }, 401),
+    );
+
+    const response = await app.request("/api/square/categories", { method: "GET" }, env);
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain("secret detail");
+  });
+});

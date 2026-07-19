@@ -1,8 +1,7 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useItems } from "../store/ItemsContext";
-
-const WORKER_BASE_URL = (import.meta.env.VITE_WORKER_BASE_URL ?? "http://localhost:8787").replace(/\/$/, "");
+import { WORKER_BASE_URL } from "../lib/config";
 
 export function QuickRegisterPage() {
   const { addItem, updateItem, isMgmtNoTaken } = useItems();
