@@ -142,13 +142,19 @@ export function useItems() {
   return ctx;
 }
 
+// 「詳細未設定あり」とだけ表示しても何が足りないか分からないため、具体的な項目名を返す。
+// 写真タブ・採寸タブ・基本情報タブの並びに合わせた順序。
+export function getMissingFieldLabels(item: MockItem): string[] {
+  const missing: string[] = [];
+  if (item.photos.length === 0) missing.push("写真");
+  if (item.measurements === null) missing.push("採寸");
+  if (item.condition === null) missing.push("コンディション");
+  if (item.gender === null) missing.push("対象");
+  if (item.category === null) missing.push("カテゴリ");
+  if (item.size === null) missing.push("サイズ");
+  return missing;
+}
+
 export function isDetailComplete(item: MockItem): boolean {
-  return (
-    item.condition !== null &&
-    item.measurements !== null &&
-    item.photos.length > 0 &&
-    item.gender !== null &&
-    item.category !== null &&
-    item.size !== null
-  );
+  return getMissingFieldLabels(item).length === 0;
 }
