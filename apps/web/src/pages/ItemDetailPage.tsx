@@ -12,9 +12,9 @@ import { StatusBadge } from "../components/StatusBadge";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
 const TABS: { key: TabKey; label: string }[] = [
+  { key: "basic", label: "基本情報" },
   { key: "photo", label: "写真" },
   { key: "measure", label: "採寸" },
-  { key: "basic", label: "基本情報" },
   { key: "desc", label: "説明文" },
 ];
 
@@ -51,7 +51,7 @@ function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
 
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { getItem, updateItem, addPhoto, removePhoto } = useItems();
+  const { getItem, updateItem, addPhoto, removePhoto, isMgmtNoTaken } = useItems();
   const item = id ? getItem(id) : undefined;
   const [tab, setTab] = useState<TabKey>("photo");
   const [pendingRole, setPendingRole] = useState<PhotoRole | null>(null);
@@ -124,6 +124,7 @@ export function ItemDetailPage() {
     setActivePoint(null);
   }
 
+  const mgmtNoConflict = item.mgmtNo.trim().length > 0 && isMgmtNoTaken(item.mgmtNo, item.id);
   const mainPhoto = item.photos.find((p) => p.role === "main");
   const subPhotos = item.photos.filter((p) => p.role === "sub");
   const measurePoints = item.measurePoints ?? DEFAULT_MEASURE_POINTS;
@@ -374,6 +375,27 @@ export function ItemDetailPage() {
 
       {tab === "basic" && (
         <div className="content">
+          <div className="field">
+            <label htmlFor="mgmtNo">商品番号（SKU）</label>
+            <input
+              id="mgmtNo"
+              className="input"
+              value={item.mgmtNo}
+              onChange={(e) => updateItem(id!, { mgmtNo: e.target.value })}
+            />
+            {mgmtNoConflict && (
+              <p className="form-error">この商品番号は他の商品ですでに使われています</p>
+            )}
+          </div>
+          <div className="field">
+            <label htmlFor="itemTitle">商品名</label>
+            <input
+              id="itemTitle"
+              className="input"
+              value={item.title}
+              onChange={(e) => updateItem(id!, { title: e.target.value })}
+            />
+          </div>
           <div className="field">
             <label htmlFor="gender">対象</label>
             <select

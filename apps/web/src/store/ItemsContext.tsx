@@ -24,7 +24,7 @@ type ItemsContextValue = {
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   addPhoto: (id: string, role: PhotoRole, previewUrl: string) => void;
   removePhoto: (id: string, photoId: string) => void;
-  isMgmtNoTaken: (mgmtNo: string) => boolean;
+  isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
 };
 
 const ItemsContext = createContext<ItemsContextValue | null>(null);
@@ -134,7 +134,8 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       },
       // 手入力のSKUが商品一覧内で既に使われていないかの事前チェック（Square側の重複チェックとは別に、
       // ローカルの下書き同士の衝突もここで防ぐ）。
-      isMgmtNoTaken: (mgmtNo) => items.some((it) => normalizeMgmtNo(it.mgmtNo) === normalizeMgmtNo(mgmtNo)),
+      isMgmtNoTaken: (mgmtNo, excludeId) =>
+        items.some((it) => it.id !== excludeId && normalizeMgmtNo(it.mgmtNo) === normalizeMgmtNo(mgmtNo)),
     }),
     [items],
   );

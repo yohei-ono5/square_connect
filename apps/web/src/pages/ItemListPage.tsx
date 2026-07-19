@@ -25,14 +25,11 @@ export function ItemListPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const stats = useMemo(() => {
-    const incomplete = items.filter((it) => !isDetailComplete(it)).length;
     // squareObjectIdは「Squareに登録」のAPI呼び出しが成功した時だけセットされるため、
     // それをそのまま登録済み判定に使う（詳細はArchitectureドキュメント参照）。
     const squareRegistered = items.filter((it) => it.squareObjectId !== null).length;
     return {
       total: items.length,
-      incomplete,
-      complete: items.length - incomplete,
       squareRegistered,
       squareUnregistered: items.length - squareRegistered,
     };
@@ -121,19 +118,6 @@ export function ItemListPage() {
             <p className="stat-label">総数</p>
             <p className="stat-value">{stats.total}</p>
           </div>
-          <div className="stat-card">
-            <p className="stat-label">詳細未設定あり</p>
-            <p className="stat-value" style={{ color: "var(--warning-text)" }}>
-              {stats.incomplete}
-            </p>
-          </div>
-          <div className="stat-card">
-            <p className="stat-label">詳細入力済み</p>
-            <p className="stat-value">{stats.complete}</p>
-          </div>
-        </div>
-
-        <div className="stat-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
           <div className="stat-card">
             <p className="stat-label">Square登録済み</p>
             <p className="stat-value" style={{ color: "var(--accent)" }}>
