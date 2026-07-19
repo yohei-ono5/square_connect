@@ -4,7 +4,7 @@ import { useItems, type MockItem } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
 type StatusFilter = "all" | "registered" | "unregistered";
-type SortKey = "mgmtNo" | "priceAsc" | "priceDesc" | "title";
+type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
 
 function matchesQuery(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -20,7 +20,7 @@ export function ItemListPage() {
   const { items, deleteItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("mgmtNo");
+  const [sortKey, setSortKey] = useState<SortKey>("mgmtNoAsc");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
@@ -44,7 +44,8 @@ export function ItemListPage() {
     });
     // mgmtNoは数字のみの想定（先頭ゼロは表示用の文字列としてのみ保持）なので、
     // 並べ替えの比較には数値化したものを使う。
-    if (sortKey === "mgmtNo") filtered.sort((a, b) => Number(a.mgmtNo) - Number(b.mgmtNo));
+    if (sortKey === "mgmtNoAsc") filtered.sort((a, b) => Number(a.mgmtNo) - Number(b.mgmtNo));
+    if (sortKey === "mgmtNoDesc") filtered.sort((a, b) => Number(b.mgmtNo) - Number(a.mgmtNo));
     if (sortKey === "priceAsc") filtered.sort((a, b) => a.price - b.price);
     if (sortKey === "priceDesc") filtered.sort((a, b) => b.price - a.price);
     if (sortKey === "title") filtered.sort((a, b) => a.title.localeCompare(b.title, "ja"));
@@ -145,7 +146,8 @@ export function ItemListPage() {
             <option value="unregistered">Square未登録</option>
           </select>
           <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-            <option value="mgmtNo">商品番号順</option>
+            <option value="mgmtNoAsc">商品番号順（昇順）</option>
+            <option value="mgmtNoDesc">商品番号順（降順）</option>
             <option value="priceAsc">価格が安い順</option>
             <option value="priceDesc">価格が高い順</option>
             <option value="title">商品名（あいうえお順）</option>
