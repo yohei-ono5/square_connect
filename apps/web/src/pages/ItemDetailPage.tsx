@@ -150,7 +150,7 @@ export function ItemDetailPage() {
           <div>
             <p style={{ fontSize: 16, fontWeight: 500, margin: 0 }}>{item.title || "（商品名未設定）"}</p>
             <p className="subtitle">
-              SKU {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
+              {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
             </p>
           </div>
           <StatusBadge item={item} />

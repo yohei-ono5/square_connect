@@ -4,7 +4,7 @@ import { useItems, type MockItem } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
 type StatusFilter = "all" | "registered" | "unregistered";
-type SortKey = "newest" | "oldest" | "priceDesc" | "priceAsc";
+type SortKey = "mgmtNo" | "priceAsc" | "priceDesc" | "title";
 
 function matchesQuery(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -20,7 +20,7 @@ export function ItemListPage() {
   const { items, deleteItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("newest");
+  const [sortKey, setSortKey] = useState<SortKey>("mgmtNo");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
@@ -36,16 +36,18 @@ export function ItemListPage() {
   }, [items]);
 
   const visibleItems = useMemo(() => {
-    // 登録順（newest）はaddItemが先頭に追加していく前提の並び。oldestはその逆順。
-    const base = sortKey === "oldest" ? [...items].reverse() : [...items];
-    const filtered = base.filter((it) => {
+    const filtered = items.filter((it) => {
       if (!matchesQuery(it, query)) return false;
       if (statusFilter === "registered") return it.squareObjectId !== null;
       if (statusFilter === "unregistered") return it.squareObjectId === null;
       return true;
     });
-    if (sortKey === "priceDesc") filtered.sort((a, b) => b.price - a.price);
+    // mgmtNoは数字のみの想定（先頭ゼロは表示用の文字列としてのみ保持）なので、
+    // 並べ替えの比較には数値化したものを使う。
+    if (sortKey === "mgmtNo") filtered.sort((a, b) => Number(a.mgmtNo) - Number(b.mgmtNo));
     if (sortKey === "priceAsc") filtered.sort((a, b) => a.price - b.price);
+    if (sortKey === "priceDesc") filtered.sort((a, b) => b.price - a.price);
+    if (sortKey === "title") filtered.sort((a, b) => a.title.localeCompare(b.title, "ja"));
     return filtered;
   }, [items, query, statusFilter, sortKey]);
 
@@ -143,10 +145,10 @@ export function ItemListPage() {
             <option value="unregistered">Square未登録</option>
           </select>
           <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-            <option value="newest">登録が新しい順</option>
-            <option value="oldest">登録が古い順</option>
-            <option value="priceDesc">価格が高い順</option>
+            <option value="mgmtNo">商品番号順</option>
             <option value="priceAsc">価格が安い順</option>
+            <option value="priceDesc">価格が高い順</option>
+            <option value="title">商品名（あいうえお順）</option>
           </select>
         </div>
       </div>
