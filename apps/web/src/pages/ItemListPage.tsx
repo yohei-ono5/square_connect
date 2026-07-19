@@ -26,7 +26,16 @@ export function ItemListPage() {
 
   const stats = useMemo(() => {
     const incomplete = items.filter((it) => !isDetailComplete(it)).length;
-    return { total: items.length, incomplete, complete: items.length - incomplete };
+    // squareObjectIdは「Squareに登録」のAPI呼び出しが成功した時だけセットされるため、
+    // それをそのまま登録済み判定に使う（詳細はArchitectureドキュメント参照）。
+    const squareRegistered = items.filter((it) => it.squareObjectId !== null).length;
+    return {
+      total: items.length,
+      incomplete,
+      complete: items.length - incomplete,
+      squareRegistered,
+      squareUnregistered: items.length - squareRegistered,
+    };
   }, [items]);
 
   const visibleItems = useMemo(() => {
@@ -121,6 +130,19 @@ export function ItemListPage() {
           <div className="stat-card">
             <p className="stat-label">詳細入力済み</p>
             <p className="stat-value">{stats.complete}</p>
+          </div>
+        </div>
+
+        <div className="stat-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+          <div className="stat-card">
+            <p className="stat-label">Square登録済み</p>
+            <p className="stat-value" style={{ color: "var(--accent)" }}>
+              {stats.squareRegistered}
+            </p>
+          </div>
+          <div className="stat-card">
+            <p className="stat-label">Square未登録</p>
+            <p className="stat-value">{stats.squareUnregistered}</p>
           </div>
         </div>
 
