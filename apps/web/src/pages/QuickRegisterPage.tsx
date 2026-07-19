@@ -5,8 +5,9 @@ import { useItems } from "../store/ItemsContext";
 const WORKER_BASE_URL = (import.meta.env.VITE_WORKER_BASE_URL ?? "http://localhost:8787").replace(/\/$/, "");
 
 export function QuickRegisterPage() {
-  const { addItem, updateItem } = useItems();
+  const { addItem, updateItem, isMgmtNoTaken } = useItems();
   const navigate = useNavigate();
+  const [mgmtNo, setMgmtNo] = useState("");
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
@@ -14,12 +15,29 @@ export function QuickRegisterPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSubmit = title.trim().length > 0 && price.trim().length > 0 && !submitting;
+  const canSubmit = mgmtNo.trim().length > 0 && title.trim().length > 0 && price.trim().length > 0 && !submitting;
+
+  // Square側の重複チェック（Square検索）とは別に、まだSquareに送っていない下書き同士の
+  // SKU衝突もここで先に防ぐ。
+  function checkMgmtNoAvailable(): boolean {
+    if (isMgmtNoTaken(mgmtNo)) {
+      setErrorMessage(`商品番号「${mgmtNo.trim()}」は既に商品一覧に存在します`);
+      return false;
+    }
+    return true;
+  }
 
   function handleSaveDraft(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
-    const item = addItem({ title: title.trim(), price: Number(price), photoPreviewUrl: photoPreviewUrl ?? undefined });
+    setErrorMessage(null);
+    if (!checkMgmtNoAvailable()) return;
+    const item = addItem({
+      mgmtNo: mgmtNo.trim(),
+      title: title.trim(),
+      price: Number(price),
+      photoPreviewUrl: photoPreviewUrl ?? undefined,
+    });
     // 時間に余裕があるスタッフはそのまま詳細編集画面で続きを入力できるよう、一覧ではなく詳細へ遷移する。
     navigate(`/items/${item.id}`);
   }
@@ -29,8 +47,17 @@ export function QuickRegisterPage() {
     if (!canSubmit) return;
     setSubmitting(true);
     setErrorMessage(null);
+    if (!checkMgmtNoAvailable()) {
+      setSubmitting(false);
+      return;
+    }
 
-    const item = addItem({ title: title.trim(), price: Number(price), photoPreviewUrl: photoPreviewUrl ?? undefined });
+    const item = addItem({
+      mgmtNo: mgmtNo.trim(),
+      title: title.trim(),
+      price: Number(price),
+      photoPreviewUrl: photoPreviewUrl ?? undefined,
+    });
     try {
       const response = await fetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
         method: "POST",
@@ -78,10 +105,21 @@ export function QuickRegisterPage() {
           ← 商品一覧に戻る
         </Link>
         <h1>クイック登録</h1>
-        <p className="subtitle">商品名と金額でSquareへ非公開登録します。写真は任意で追加できます。</p>
+        <p className="subtitle">商品番号・商品名・金額でSquareへ非公開登録します。写真は任意で追加できます。</p>
       </div>
 
       <form className="content" onSubmit={(e) => e.preventDefault()}>
+        <div className="field">
+          <label htmlFor="mgmtNo">商品番号（SKU）</label>
+          <input
+            id="mgmtNo"
+            className="input"
+            placeholder="例：00604"
+            value={mgmtNo}
+            onChange={(e) => setMgmtNo(e.target.value)}
+            autoFocus
+          />
+        </div>
         <div className="field">
           <label htmlFor="title">商品名</label>
           <input
@@ -90,7 +128,6 @@ export function QuickRegisterPage() {
             placeholder="例：ディズニー Tシャツ"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            autoFocus
           />
         </div>
         <div className="field">

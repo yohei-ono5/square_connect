@@ -43,14 +43,15 @@ export const ItemSchema = z.object({
 });
 export type Item = z.infer<typeof ItemSchema>;
 
-// クイック登録画面で送るのはこの3項目のみ
+// クイック登録画面で送るのはこの3項目のみ。mgmt_no（SKU）は自動採番ではなくスタッフの手入力。
 export const QuickRegisterInputSchema = z.object({
+  mgmtNo: z.string().trim().min(1),
   title: z.string().min(1),
   price: z.number().int().nonnegative(),
 });
 export type QuickRegisterInput = z.infer<typeof QuickRegisterInputSchema>;
 
-// SKU採番と下書き保存を終えた後、WorkerからSquareへ登録する際の入力。
+// SKU入力と下書き保存を終えた後、WorkerからSquareへ登録する際の入力。
 export const RegisterToSquareInputSchema = z
   .object({
     mgmtNo: z.string().trim().min(1).max(100),

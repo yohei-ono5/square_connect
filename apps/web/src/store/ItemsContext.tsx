@@ -13,7 +13,8 @@ export type MockPhoto = { id: string; role: PhotoRole; previewUrl: string };
 // ここではデモ用にItemへ持たせている。
 export type MockItem = Item & { photos: MockPhoto[]; measurePoints?: MeasurePoints };
 
-export type QuickRegisterInput = { title: string; price: number; photoPreviewUrl?: string };
+// 管理番号（SKU）はスタッフの手入力。共有カウンタでの自動採番はやめた。
+export type QuickRegisterInput = { mgmtNo: string; title: string; price: number; photoPreviewUrl?: string };
 
 type ItemsContextValue = {
   items: MockItem[];
@@ -23,20 +24,16 @@ type ItemsContextValue = {
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   addPhoto: (id: string, role: PhotoRole, previewUrl: string) => void;
   removePhoto: (id: string, photoId: string) => void;
+  isMgmtNoTaken: (mgmtNo: string) => boolean;
 };
 
 const ItemsContext = createContext<ItemsContextValue | null>(null);
 
-let mgmtNoCounter = 604;
 let idCounter = 1;
 let photoIdCounter = 1;
 
 function nextId(): string {
   return String(idCounter++);
-}
-
-function nextMgmtNo(): string {
-  return String(mgmtNoCounter++).padStart(5, "0");
 }
 
 function nextPhotoId(): string {
@@ -50,12 +47,11 @@ const PLACEHOLDER_PHOTO =
     '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#ccc"/></svg>',
   );
 
-function makeItem(overrides: Partial<MockItem>): MockItem {
+function makeItem(overrides: Partial<MockItem> & { mgmtNo: string }): MockItem {
   return {
     id: nextId(),
     storeId: "store-1",
     status: "draft",
-    mgmtNo: nextMgmtNo(),
     title: "",
     price: 0,
     gender: null,
@@ -73,6 +69,7 @@ function makeItem(overrides: Partial<MockItem>): MockItem {
 // 一覧が空だと状態バッジの見え方を確認できないため、サンプルを2件だけ入れておく。
 const seedItems: MockItem[] = [
   makeItem({
+    mgmtNo: "00604",
     title: "ディズニー Tシャツ",
     price: 3000,
     gender: "unisex",
@@ -84,11 +81,16 @@ const seedItems: MockItem[] = [
     photos: [{ id: nextPhotoId(), role: "main", previewUrl: PLACEHOLDER_PHOTO }],
   }),
   makeItem({
+    mgmtNo: "00605",
     title: "バンドT ロックバンド",
     price: 2500,
     squareObjectId: "sq-mock-seed-2",
   }),
 ];
+
+function normalizeMgmtNo(mgmtNo: string): string {
+  return mgmtNo.trim().toLowerCase();
+}
 
 export function ItemsProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<MockItem[]>(seedItems);
@@ -99,6 +101,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       getItem: (id) => items.find((it) => it.id === id),
       addItem: (input) => {
         const item = makeItem({
+          mgmtNo: input.mgmtNo.trim(),
           title: input.title,
           price: input.price,
           photos: input.photoPreviewUrl
@@ -129,6 +132,9 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)),
         );
       },
+      // 手入力のSKUが商品一覧内で既に使われていないかの事前チェック（Square側の重複チェックとは別に、
+      // ローカルの下書き同士の衝突もここで防ぐ）。
+      isMgmtNoTaken: (mgmtNo) => items.some((it) => normalizeMgmtNo(it.mgmtNo) === normalizeMgmtNo(mgmtNo)),
     }),
     [items],
   );
