@@ -149,19 +149,5 @@ export function useItems() {
   return ctx;
 }
 
-// 「詳細未設定あり」とだけ表示しても何が足りないか分からないため、具体的な項目名を返す。
-// 写真タブ・採寸タブ・基本情報タブの並びに合わせた順序。
-export function getMissingFieldLabels(item: MockItem): string[] {
-  const missing: string[] = [];
-  if (item.photos.length === 0) missing.push("写真");
-  if (item.measurements === null) missing.push("採寸");
-  if (item.condition === null) missing.push("コンディション");
-  if (item.gender === null) missing.push("対象");
-  if (item.category === null) missing.push("カテゴリ");
-  if (item.size === null) missing.push("サイズ");
-  return missing;
-}
-
-export function isDetailComplete(item: MockItem): boolean {
-  return getMissingFieldLabels(item).length === 0;
-}
+// 詳細入力状況（写真・採寸・基本情報が埋まっているか）のトラッキングは、一旦廃止して作り直す予定。
+// バッジ・フィルタ・統計は当面 squareObjectId（Square登録済みかどうか）だけを基準にする。

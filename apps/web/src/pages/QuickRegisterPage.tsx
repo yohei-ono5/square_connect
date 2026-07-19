@@ -114,7 +114,8 @@ export function QuickRegisterPage() {
           <input
             id="mgmtNo"
             className="input"
-            placeholder="例：00604"
+            placeholder="例：01041"
+            inputMode="numeric"
             value={mgmtNo}
             onChange={(e) => setMgmtNo(e.target.value)}
             autoFocus

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { isDetailComplete, useItems, type MockItem } from "../store/ItemsContext";
+import { useItems, type MockItem } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
-type StatusFilter = "all" | "incomplete" | "complete";
+type StatusFilter = "all" | "registered" | "unregistered";
 type SortKey = "newest" | "oldest" | "priceDesc" | "priceAsc";
 
 function matchesQuery(item: MockItem, query: string): boolean {
@@ -40,8 +40,8 @@ export function ItemListPage() {
     const base = sortKey === "oldest" ? [...items].reverse() : [...items];
     const filtered = base.filter((it) => {
       if (!matchesQuery(it, query)) return false;
-      if (statusFilter === "incomplete") return !isDetailComplete(it);
-      if (statusFilter === "complete") return isDetailComplete(it);
+      if (statusFilter === "registered") return it.squareObjectId !== null;
+      if (statusFilter === "unregistered") return it.squareObjectId === null;
       return true;
     });
     if (sortKey === "priceDesc") filtered.sort((a, b) => b.price - a.price);
@@ -139,8 +139,8 @@ export function ItemListPage() {
           />
           <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
             <option value="all">すべての状態</option>
-            <option value="incomplete">詳細未設定あり</option>
-            <option value="complete">詳細入力済み</option>
+            <option value="registered">Square登録済み</option>
+            <option value="unregistered">Square未登録</option>
           </select>
           <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
             <option value="newest">登録が新しい順</option>
@@ -185,7 +185,7 @@ export function ItemListPage() {
                   <div>
                     <p style={{ margin: 0, fontSize: 14 }}>{item.title || "（商品名未設定）"}</p>
                     <p className="subtitle">
-                      SKU {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
+                      {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
                     </p>
                   </div>
                   <StatusBadge item={item} />

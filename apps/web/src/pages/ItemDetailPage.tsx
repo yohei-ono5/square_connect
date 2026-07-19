@@ -380,6 +380,7 @@ export function ItemDetailPage() {
             <input
               id="mgmtNo"
               className="input"
+              inputMode="numeric"
               value={item.mgmtNo}
               onChange={(e) => updateItem(id!, { mgmtNo: e.target.value })}
             />
