@@ -1,5 +1,5 @@
 {
-  "name": "@clothes-check/worker",
+  "name": "@square-connect/worker",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "hono": "^4.6.0",
-    "@clothes-check/shared": "workspace:*"
+    "@square-connect/shared": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5.0",

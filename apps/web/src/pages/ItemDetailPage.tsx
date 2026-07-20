@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@clothes-check/shared";
+import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@square-connect/shared";
 import {
   calculateMeasurements,
   detectInitialMeasurePoints,
   DEFAULT_MEASURE_POINTS,
   type MeasurePointKey,
-} from "@clothes-check/measure";
+} from "@square-connect/measure";
 import { useItems, type PhotoRole } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
+import { WORKER_BASE_URL } from "../lib/config";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
 const TABS: { key: TabKey; label: string }[] = [
@@ -59,6 +60,8 @@ export function ItemDetailPage() {
   const [measuring, setMeasuring] = useState(false);
   const [detected, setDetected] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -82,6 +85,36 @@ export function ItemDetailPage() {
   function showToast(message: string) {
     setToast(message);
     setTimeout(() => setToast(null), 2000);
+  }
+
+  async function handleSave() {
+    if (!id || saving || mgmtNoConflict) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (currentItem.squareObjectId) {
+        const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/square`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            squareObjectId: currentItem.squareObjectId,
+            mgmtNo: currentItem.mgmtNo,
+            title: currentItem.title,
+            price: currentItem.price,
+            description: buildDescription(currentItem),
+          }),
+        });
+        const result = (await response.json().catch(() => null)) as { message?: string } | null;
+        if (!response.ok) throw new Error(result?.message ?? "Squareの商品更新に失敗しました");
+        showToast("保存してSquareにも反映しました");
+      } else {
+        showToast("下書きを保存しました");
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openPicker(role: PhotoRole) {
@@ -435,6 +468,9 @@ export function ItemDetailPage() {
             </select>
             {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
             {categoriesError && <p className="form-error">{categoriesError}</p>}
+            {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
+              <p className="hint">Squareにカテゴリが登録されていません</p>
+            )}
           </div>
           <div className="field">
             <label htmlFor="size">表記サイズ</label>
@@ -479,7 +515,7 @@ export function ItemDetailPage() {
       {tab === "desc" && (
         <div className="content">
           <div className="description-preview">{buildDescription(item)}</div>
-          <p className="hint">未設定の項目は行ごと省略されます。保存するとSquareの商品情報にも反映されます。</p>
+          <p className="hint">Square登録済みの商品は、保存するとSquareの商品名・SKU・価格・説明文にも反映されます。</p>
         </div>
       )}
 
@@ -488,9 +524,10 @@ export function ItemDetailPage() {
           type="button"
           className="btn btn-primary"
           style={{ flex: 1 }}
-          onClick={() => showToast("保存しました")}
+          onClick={handleSave}
+          disabled={saving || mgmtNoConflict}
         >
-          下書き保存
+          {saving ? "保存中…" : "保存"}
         </button>
         <button
           type="button"
@@ -501,6 +538,7 @@ export function ItemDetailPage() {
           Squareに登録
         </button>
       </div>
+      {saveError && <p className="form-error" style={{ margin: "0 16px 12px" }}>{saveError}</p>}
       {toast && <p className="toast">{toast}</p>}
     </div>
   );

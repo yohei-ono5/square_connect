@@ -1,22 +1,20 @@
--- 店舗（将来はテナント単位）
+-- 企業・店舗（小規模運用を前提に1テーブルで管理。同じ企業が複数店舗を持つ場合は
+-- company_id / company_name を共有する）
 create table stores (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  created_at timestamptz not null default now()
+  store_id uuid primary key default gen_random_uuid(),
+  company_id uuid not null default gen_random_uuid(),
+  company_name text not null,
+  store_name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
--- スタッフ（Supabase Authのユーザーと1:1、1店舗に複数名）
-create table app_users (
-  id uuid primary key references auth.users (id),
-  store_id uuid not null references stores (id),
-  name text not null,
-  role text not null default 'staff'
-);
+create index stores_company_id_index on stores (company_id);
 
 -- 商品の下書き本体。必須は mgmt_no / title / price のみ、それ以外はNULL可（後から追記編集）
 create table items (
-  id uuid primary key default gen_random_uuid(),
-  store_id uuid not null references stores (id),
+  item_id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references stores (store_id),
   status text not null default 'draft' check (status in ('draft', 'confirmed', 'pushed')),
   mgmt_no text not null,
   title text not null,
@@ -31,7 +29,10 @@ create table items (
   m_sleeve numeric,
   description text,
   square_object_id text,
-  created_by uuid references app_users (id),
+  square_variation_id text,
+  square_version bigint,
+  square_synced_at timestamptz,
+  square_deleted_at timestamptz,
   updated_at timestamptz not null default now(),
   deleted_at timestamptz,
   unique (store_id, mgmt_no)
@@ -40,8 +41,8 @@ create table items (
 -- 写真（正面=main は採寸トリガーとして特別扱い。それ以外は撮る/撮らないが商品次第なので
 -- 背面・タグ・襟元…のような固定カテゴリは設けず、sub として自由に何枚でも追加できる）。0枚でも登録可
 create table item_photos (
-  id uuid primary key default gen_random_uuid(),
-  item_id uuid not null references items (id) on delete cascade,
+  item_photo_id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references items (item_id) on delete cascade,
   role text not null check (role in ('main', 'sub')),
   storage_path text not null,
   width integer,
@@ -50,23 +51,43 @@ create table item_photos (
   created_at timestamptz not null default now()
 );
 
-alter table app_users enable row level security;
+create unique index items_square_object_id_unique
+  on items (square_object_id)
+  where square_object_id is not null;
+
+-- catalog.version.updatedは変更オブジェクト自体を含まないため、前回のSquareカタログ
+-- 更新時刻を保持し、SearchCatalogObjects(begin_time)の起点にする。
+create table square_sync_state (
+  merchant_id text primary key,
+  last_catalog_updated_at timestamptz not null,
+  updated_at timestamptz not null default now()
+);
+
+-- SquareがWebhookを再送しても同じイベントを安全に扱えるようイベントIDを記録する。
+create table square_webhook_events (
+  square_event_id text primary key,
+  event_type text not null,
+  received_at timestamptz not null default now()
+);
+
+alter table stores enable row level security;
 alter table items enable row level security;
 alter table item_photos enable row level security;
+alter table square_sync_state enable row level security;
+alter table square_webhook_events enable row level security;
 
--- スタッフは自分の store_id 配下のみ閲覧・操作できる
-create policy "self app_user" on app_users
-  for all using (id = auth.uid());
+-- テスト運用中はSupabase Authを使わず、anonキーを持つブラウザから店舗・商品・写真を
+-- 読み書きできるようにする。本運用時はこの3ポリシーを店舗スコープの認証ポリシーへ置き換える。
+create policy "public stores during pilot" on stores
+  for all to anon using (true) with check (true);
 
-create policy "store scoped items" on items
-  for all using (
-    store_id in (select store_id from app_users where id = auth.uid())
-  );
+create policy "public items during pilot" on items
+  for all to anon using (true) with check (true);
 
-create policy "store scoped item_photos" on item_photos
-  for all using (
-    item_id in (
-      select id from items
-      where store_id in (select store_id from app_users where id = auth.uid())
-    )
-  );
+create policy "public item_photos during pilot" on item_photos
+  for all to anon using (true) with check (true);
+
+grant select, insert, update, delete on stores, items, item_photos to anon;
+
+-- Square同期用の2テーブルはService Roleを持つWorkerだけが操作するため、
+-- ブラウザ向けRLSポリシーは作らない。

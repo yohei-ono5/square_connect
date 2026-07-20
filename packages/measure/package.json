@@ -1,5 +1,5 @@
 {
-  "name": "@clothes-check/measure",
+  "name": "@square-connect/measure",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@clothes-check/shared": "workspace:*"
+    "@square-connect/shared": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

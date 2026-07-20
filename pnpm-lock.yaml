@@ -10,10 +10,10 @@ importers:
 
   apps/web:
     dependencies:
-      '@clothes-check/measure':
+      '@square-connect/measure':
         specifier: workspace:*
         version: link:../../packages/measure
-      '@clothes-check/shared':
+      '@square-connect/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@supabase/supabase-js':
@@ -50,7 +50,7 @@ importers:
 
   apps/worker:
     dependencies:
-      '@clothes-check/shared':
+      '@square-connect/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       hono:
@@ -75,7 +75,7 @@ importers:
 
   packages/measure:
     dependencies:
-      '@clothes-check/shared':
+      '@square-connect/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:

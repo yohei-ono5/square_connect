@@ -1,10 +1,10 @@
 {
-  "name": "clothes-check",
+  "name": "square-connect",
   "private": true,
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev:web": "pnpm --filter @clothes-check/web dev",
-    "dev:worker": "pnpm --filter @clothes-check/worker dev",
+    "dev:web": "pnpm --filter @square-connect/web dev",
+    "dev:worker": "pnpm --filter @square-connect/worker dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"

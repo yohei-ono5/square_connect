@@ -1,9 +1,9 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import type { Item } from "@clothes-check/shared";
-import type { MeasurePoints } from "@clothes-check/measure";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import type { Item } from "@square-connect/shared";
+import type { MeasurePoints } from "@square-connect/measure";
 import { WORKER_BASE_URL } from "../lib/config";
 
-export type { MeasurePointKey, MeasurePoint, MeasurePoints } from "@clothes-check/measure";
+export type { MeasurePointKey, MeasurePoint, MeasurePoints } from "@square-connect/measure";
 
 // 正面写真だけが自動採寸のトリガーになる特別な役割。それ以外は撮る/撮らないが商品によって
 // 違うため、背面・タグ・襟元…のような固定カテゴリを設けず「追加写真」として自由に足せる。
@@ -105,6 +105,30 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   const [squareCategories, setSquareCategories] = useState<SquareCategory[] | null>(null);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const categoriesRequestedRef = useRef(false);
+
+  // 詳細画面のuseEffectから安全に呼べるよう参照を固定する。失敗時も自動で再試行を
+  // 繰り返さず、画面を開いている間は結果（成功・空・失敗）をそのまま表示する。
+  const loadSquareCategories = useCallback(() => {
+    if (categoriesRequestedRef.current) return;
+    categoriesRequestedRef.current = true;
+    setCategoriesLoading(true);
+    setCategoriesError(null);
+    fetch(`${WORKER_BASE_URL}/api/square/categories`)
+      .then(async (response) => {
+        const result = (await response.json().catch(() => null)) as
+          | { categories?: SquareCategory[]; message?: string }
+          | null;
+        if (!response.ok || !Array.isArray(result?.categories)) {
+          throw new Error(result?.message ?? "カテゴリの取得に失敗しました");
+        }
+        setSquareCategories(result.categories);
+      })
+      .catch((error: unknown) => {
+        setCategoriesError(error instanceof Error ? error.message : "カテゴリの取得に失敗しました");
+      })
+      .finally(() => setCategoriesLoading(false));
+  }, []);
 
   const value = useMemo<ItemsContextValue>(
     () => ({
@@ -151,27 +175,9 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       categoriesLoading,
       categoriesError,
       // カテゴリはSquare側で頻繁に変わるものではないため、セッション中に1回だけ取得してキャッシュする。
-      loadSquareCategories: () => {
-        if (squareCategories !== null || categoriesLoading) return;
-        setCategoriesLoading(true);
-        setCategoriesError(null);
-        fetch(`${WORKER_BASE_URL}/api/square/categories`)
-          .then(async (response) => {
-            const result = (await response.json().catch(() => null)) as
-              | { categories?: SquareCategory[]; message?: string }
-              | null;
-            if (!response.ok || !result?.categories) {
-              throw new Error(result?.message ?? "カテゴリの取得に失敗しました");
-            }
-            setSquareCategories(result.categories);
-          })
-          .catch((error: unknown) => {
-            setCategoriesError(error instanceof Error ? error.message : "カテゴリの取得に失敗しました");
-          })
-          .finally(() => setCategoriesLoading(false));
-      },
+      loadSquareCategories,
     }),
-    [items, squareCategories, categoriesLoading, categoriesError],
+    [items, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
   );
 
   return <ItemsContext.Provider value={value}>{children}</ItemsContext.Provider>;

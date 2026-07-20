@@ -69,6 +69,14 @@ export type RegisterToSquareResult = {
   squareVariationId: string;
 };
 
+export const UpdateSquareItemInputSchema = RegisterToSquareInputSchema.and(
+  z.object({
+    squareObjectId: z.string().trim().min(1).max(100),
+    description: z.string().max(4096).optional(),
+  }),
+);
+export type UpdateSquareItemInput = z.infer<typeof UpdateSquareItemInputSchema>;
+
 export type MeasurementResult = {
   lengthCm: number;
   chestWidthCm: number;
