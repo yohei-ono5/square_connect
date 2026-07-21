@@ -37,11 +37,11 @@ type ItemsContextValue = {
 
 const ItemsContext = createContext<ItemsContextValue | null>(null);
 
-let idCounter = 1;
 let photoIdCounter = 1;
 
 function nextId(): string {
-  return String(idCounter++);
+  // 再読み込み後もSquareの冪等性キーが重複しないよう、商品IDにはUUIDを使う。
+  return crypto.randomUUID();
 }
 
 function nextPhotoId(): string {
