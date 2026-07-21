@@ -276,7 +276,7 @@ square_connect/
 ├── apps/
 │   ├── web/                 # Vite + React + TypeScript（SPA）
 │   │   └── Supabaseクライアントで直接DB読み書き（テスト中はanon公開）
-│   │       Cloudflare Pagesへデプロイ
+│   │       Worker Static AssetsとしてAPIと一体デプロイ
 │   └── worker/               # Cloudflare Workers + Hono
 │       └── Square/メルカリ連携、SKU重複チェックなど「秘密を扱う」処理のみ担当
 │           Squareトークン等はWorkerのSecretsに保持
