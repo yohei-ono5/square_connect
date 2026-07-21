@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 
 [vars]
-SQUARE_ENV = "sandbox"
+SQUARE_ENV = "production"
 
 # 秘密情報は `wrangler secret put SQUARE_ACCESS_TOKEN`、
 # `wrangler secret put SQUARE_WEBHOOK_SIGNATURE_KEY`、
