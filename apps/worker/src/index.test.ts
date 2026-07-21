@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "./index";
 
+const r2Get = vi.fn();
+const r2Put = vi.fn();
+const r2Delete = vi.fn();
+
 const env = {
+  ITEM_IMAGES: {
+    get: r2Get,
+    put: r2Put,
+    delete: r2Delete,
+  } as unknown as R2Bucket,
   SQUARE_ACCESS_TOKEN: "sandbox-token",
   SQUARE_ENV: "sandbox",
   SQUARE_WEBHOOK_SIGNATURE_KEY: "webhook-secret",
@@ -37,6 +46,72 @@ async function squareWebhookSignature(body: string): Promise<string> {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
+
+describe("item photo storage", () => {
+  it("stores a Square-compatible image in R2 and records it in Supabase", async () => {
+    const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        squareResponse([
+          {
+            item_photo_id: "a8ae5959-69c9-4d25-b369-d27bfeb52bd8",
+            item_id: itemId,
+            role: "main",
+            storage_path: `items/${itemId}/a8ae5959-69c9-4d25-b369-d27bfeb52bd8.png`,
+            width: null,
+            height: null,
+            sort: 0,
+          },
+        ], 201),
+      )
+      .mockResolvedValueOnce(squareResponse([]));
+    const body = new FormData();
+    body.append("role", "main");
+    body.append(
+      "file",
+      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])], "item.png", {
+        type: "image/png",
+      }),
+    );
+
+    const response = await app.request(`/api/items/${itemId}/photos`, { method: "POST", body }, env);
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      photo: { itemId, role: "main", previewUrl: expect.stringContaining(`/media/items/${itemId}/`) },
+    });
+    expect(r2Put).toHaveBeenCalledOnce();
+    expect(String(r2Put.mock.calls[0][0])).toMatch(new RegExp(`^items/${itemId}/[0-9a-f-]+\\.png$`));
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://project.supabase.co/rest/v1/item_photos");
+    expect(fetchSpy.mock.calls[1][0]).toContain(`item_photos?item_id=eq.${itemId}&role=eq.main`);
+  });
+
+  it("rejects WebP before writing to R2", async () => {
+    const body = new FormData();
+    body.append("role", "main");
+    body.append("file", new File(["webp"], "item.webp", { type: "image/webp" }));
+
+    const response = await app.request("/api/items/item-1/photos", { method: "POST", body }, env);
+
+    expect(response.status).toBe(415);
+    expect(await response.json()).toMatchObject({ error: "unsupported_image_type" });
+    expect(r2Put).not.toHaveBeenCalled();
+  });
+
+  it("rejects files larger than Square's 15 MB limit", async () => {
+    const body = new FormData();
+    body.append("role", "sub");
+    body.append("file", new File([new Uint8Array(15_000_001)], "large.jpg", { type: "image/jpeg" }));
+
+    const response = await app.request("/api/items/item-1/photos", { method: "POST", body }, env);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: "image_too_large" });
+    expect(r2Put).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/items/:id/register-to-square", () => {

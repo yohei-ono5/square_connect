@@ -10,6 +10,7 @@ import {
 import { useItems, type PhotoRole } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { WORKER_BASE_URL } from "../lib/config";
+import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
 const TABS: { key: TabKey; label: string }[] = [
@@ -52,7 +53,21 @@ function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
 
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { getItem, updateItem, addPhoto, removePhoto, isMgmtNoTaken, squareCategories, categoriesLoading, categoriesError, loadSquareCategories } = useItems();
+  const {
+    getItem,
+    itemsLoading,
+    itemsError,
+    updateItem,
+    saveItem,
+    saveSquareRegistration,
+    addPhoto,
+    removePhoto,
+    isMgmtNoTaken,
+    squareCategories,
+    categoriesLoading,
+    categoriesError,
+    loadSquareCategories,
+  } = useItems();
   const item = id ? getItem(id) : undefined;
   const [tab, setTab] = useState<TabKey>("basic");
   const [pendingRole, setPendingRole] = useState<PhotoRole | null>(null);
@@ -62,11 +77,23 @@ export function ItemDetailPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadSquareCategories();
   }, [loadSquareCategories]);
+
+  if (!item && itemsLoading) {
+    return (
+      <div className="screen">
+        <div className="content">
+          <p style={{ color: "var(--text-secondary)" }}>商品を読み込んでいます…</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!item) {
     return (
@@ -76,6 +103,7 @@ export function ItemDetailPage() {
             ← 商品一覧に戻る
           </Link>
           <h1>商品が見つかりません</h1>
+          {itemsError && <p className="form-error">{itemsError}</p>}
         </div>
       </div>
     );
@@ -92,6 +120,7 @@ export function ItemDetailPage() {
     setSaving(true);
     setSaveError(null);
     try {
+      await saveItem(id);
       if (currentItem.squareObjectId) {
         const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/square`, {
           method: "PATCH",
@@ -117,18 +146,74 @@ export function ItemDetailPage() {
     }
   }
 
+  async function handleRegisterToSquare() {
+    if (!id || saving || currentItem.squareObjectId || mgmtNoConflict) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await saveItem(id);
+      const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mgmtNo: currentItem.mgmtNo,
+          title: currentItem.title,
+          price: currentItem.price,
+        }),
+      });
+      const result = (await response.json().catch(() => null)) as
+        | { squareObjectId?: string; squareVariationId?: string; message?: string }
+        | null;
+      if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
+        throw new Error(result?.message ?? "Squareへの登録に失敗しました");
+      }
+      await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
+      showToast("Squareへ登録し、Supabaseへ保存しました");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function openPicker(role: PhotoRole) {
     setPendingRole(role);
     fileInputRef.current?.click();
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !pendingRole || !id) return;
-    const url = URL.createObjectURL(file);
-    addPhoto(id, pendingRole, url);
+    const role = pendingRole;
     setPendingRole(null);
+    if (!file || !role || !id) return;
+    const validationMessage = validateSquareImage(file);
+    if (validationMessage) {
+      setPhotoError(validationMessage);
+      return;
+    }
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      await addPhoto(id, role, file);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "写真の保存に失敗しました");
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  async function handleRemovePhoto(photoId: string) {
+    if (!id || photoBusy) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      await removePhoto(id, photoId);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "写真の削除に失敗しました");
+    } finally {
+      setPhotoBusy(false);
+    }
   }
 
   async function runAutoMeasure() {
@@ -177,7 +262,7 @@ export function ItemDetailPage() {
 
   return (
     <div className="screen">
-      <input type="file" accept="image/*" ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
+      <input type="file" accept={SQUARE_IMAGE_ACCEPT} ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
 
       <div className="header">
         <Link to="/" className="back-link">
@@ -219,13 +304,14 @@ export function ItemDetailPage() {
                   type="button"
                   className="btn"
                   style={{ position: "absolute", top: 6, right: 6, padding: "2px 8px", fontSize: 12 }}
-                  onClick={() => removePhoto(id!, mainPhoto.id)}
+                  onClick={() => handleRemovePhoto(mainPhoto.id)}
+                  disabled={photoBusy}
                 >
                   削除
                 </button>
               </div>
             ) : (
-              <button type="button" className="photo-slot empty" onClick={() => openPicker("main")}>
+              <button type="button" className="photo-slot empty" onClick={() => openPicker("main")} disabled={photoBusy}>
                 <span>＋</span>
                 <span style={{ fontSize: 12 }}>正面写真を追加</span>
               </button>
@@ -243,20 +329,23 @@ export function ItemDetailPage() {
                   type="button"
                   className="btn"
                   style={{ position: "absolute", top: 6, right: 6, padding: "2px 8px", fontSize: 12 }}
-                  onClick={() => removePhoto(id!, photo.id)}
+                  onClick={() => handleRemovePhoto(photo.id)}
+                  disabled={photoBusy}
                 >
                   削除
                 </button>
               </div>
             ))}
-            <button type="button" className="photo-slot empty" onClick={() => openPicker("sub")}>
+            <button type="button" className="photo-slot empty" onClick={() => openPicker("sub")} disabled={photoBusy}>
               <span>＋</span>
               <span style={{ fontSize: 12 }}>写真を追加</span>
             </button>
           </div>
           <p className="hint">
-            背面・タグ・襟元・ダメージなど、決まったカテゴリはありません。撮った分だけ自由に追加してください。写真は0枚でも保存できます。
+            背面・タグ・襟元・ダメージなど、決まったカテゴリはありません。JPEG・PJPEG・PNG・GIF（各15MB以下）を保存できます。写真は0枚でも保存できます。
           </p>
+          {photoBusy && <p className="hint">写真を保存しています…</p>}
+          {photoError && <p className="form-error">{photoError}</p>}
         </div>
       )}
 
@@ -533,9 +622,10 @@ export function ItemDetailPage() {
           type="button"
           className="btn"
           style={{ flex: 1 }}
-          onClick={() => showToast("モック環境のため実際のSquareへは登録されません")}
+          onClick={handleRegisterToSquare}
+          disabled={saving || Boolean(item.squareObjectId) || mgmtNoConflict}
         >
-          Squareに登録
+          {item.squareObjectId ? "Square登録済み" : "Squareに登録"}
         </button>
       </div>
       {saveError && <p className="form-error" style={{ margin: "0 16px 12px" }}>{saveError}</p>}

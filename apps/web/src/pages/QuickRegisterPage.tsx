@@ -1,20 +1,26 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useItems } from "../store/ItemsContext";
 import { WORKER_BASE_URL } from "../lib/config";
+import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 
 export function QuickRegisterPage() {
-  const { addItem, updateItem, isMgmtNoTaken } = useItems();
+  const { addItem, saveSquareRegistration, isMgmtNoTaken } = useItems();
   const navigate = useNavigate();
   const [mgmtNo, setMgmtNo] = useState("");
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const canSubmit = mgmtNo.trim().length > 0 && title.trim().length > 0 && price.trim().length > 0 && !submitting;
+
+  useEffect(() => () => {
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+  }, [photoPreviewUrl]);
 
   // Square側の重複チェック（Square検索）とは別に、まだSquareに送っていない下書き同士の
   // SKU衝突もここで先に防ぐ。
@@ -26,19 +32,28 @@ export function QuickRegisterPage() {
     return true;
   }
 
-  function handleSaveDraft(e: FormEvent) {
+  async function handleSaveDraft(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+    setSubmitting(true);
     setErrorMessage(null);
-    if (!checkMgmtNoAvailable()) return;
-    const item = addItem({
-      mgmtNo: mgmtNo.trim(),
-      title: title.trim(),
-      price: Number(price),
-      photoPreviewUrl: photoPreviewUrl ?? undefined,
-    });
-    // 時間に余裕があるスタッフはそのまま詳細編集画面で続きを入力できるよう、一覧ではなく詳細へ遷移する。
-    navigate(`/items/${item.id}`);
+    if (!checkMgmtNoAvailable()) {
+      setSubmitting(false);
+      return;
+    }
+    try {
+      const item = await addItem({
+        mgmtNo: mgmtNo.trim(),
+        title: title.trim(),
+        price: Number(price),
+        photoFile: photoFile ?? undefined,
+      });
+      // 時間に余裕があるスタッフはそのまま詳細編集画面で続きを入力できるよう、一覧ではなく詳細へ遷移する。
+      navigate(`/items/${item.id}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "商品の保存に失敗しました");
+      setSubmitting(false);
+    }
   }
 
   async function handleRegisterToSquare(e: FormEvent) {
@@ -51,13 +66,14 @@ export function QuickRegisterPage() {
       return;
     }
 
-    const item = addItem({
-      mgmtNo: mgmtNo.trim(),
-      title: title.trim(),
-      price: Number(price),
-      photoPreviewUrl: photoPreviewUrl ?? undefined,
-    });
     try {
+      // 先にSupabaseへ商品を作り、そのUUIDをSquare登録の冪等性キーに利用する。
+      const item = await addItem({
+        mgmtNo: mgmtNo.trim(),
+        title: title.trim(),
+        price: Number(price),
+        photoFile: photoFile ?? undefined,
+      });
       const response = await fetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -68,14 +84,14 @@ export function QuickRegisterPage() {
         }),
       });
       const result = (await response.json().catch(() => null)) as
-        | { squareObjectId?: string; message?: string }
+        | { squareObjectId?: string; squareVariationId?: string; message?: string }
         | null;
 
-      if (!response.ok || !result?.squareObjectId) {
+      if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
         throw new Error(result?.message ?? "Squareへの登録に失敗しました");
       }
 
-      updateItem(item.id, { squareObjectId: result.squareObjectId });
+      await saveSquareRegistration(item.id, result.squareObjectId, result.squareVariationId);
       navigate(`/items/${item.id}`);
     } catch (error) {
       // 商品自体はローカルに作成済みなので、失敗しても商品一覧からは見える。再登録は詳細編集画面の「Squareに登録」から。
@@ -88,12 +104,18 @@ export function QuickRegisterPage() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    const validationMessage = validateSquareImage(file);
+    if (validationMessage) {
+      setErrorMessage(validationMessage);
+      return;
+    }
+    setErrorMessage(null);
+    setPhotoFile(file);
     setPhotoPreviewUrl(URL.createObjectURL(file));
   }
 
   function removePhoto() {
-    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    setPhotoFile(null);
     setPhotoPreviewUrl(null);
   }
 
@@ -148,7 +170,7 @@ export function QuickRegisterPage() {
             id="quick-photo"
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={SQUARE_IMAGE_ACCEPT}
             style={{ display: "none" }}
             onChange={handlePhotoChange}
           />
@@ -181,7 +203,7 @@ export function QuickRegisterPage() {
         </div>
         {errorMessage && <p className="form-error">{errorMessage}</p>}
         <p className="hint">
-          対象（メンズ/レディース/ユニセックス）・カテゴリ・サイズ・写真・採寸・コンディションはあとから商品詳細編集画面で追加できます。
+          写真はJPEG・PJPEG・PNG・GIF（15MB以下）に対応しています。対象（メンズ/レディース/ユニセックス）・カテゴリ・サイズ・採寸・コンディションはあとから商品詳細編集画面で追加できます。
         </p>
       </form>
     </div>

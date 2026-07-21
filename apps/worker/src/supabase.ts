@@ -3,6 +3,16 @@ export type SupabaseConfig = {
   serviceRoleKey: string;
 };
 
+export type ItemPhotoRecord = {
+  item_photo_id: string;
+  item_id: string;
+  role: "main" | "sub";
+  storage_path: string;
+  width: number | null;
+  height: number | null;
+  sort: number;
+};
+
 function assertConfig(config: SupabaseConfig) {
   if (!config.url || !config.serviceRoleKey) {
     throw new Error("Supabase sync is not configured");
@@ -89,4 +99,52 @@ export async function updateItemBySquareId(
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify(patch),
   });
+}
+
+export async function createItemPhoto(
+  config: SupabaseConfig,
+  photo: ItemPhotoRecord,
+): Promise<ItemPhotoRecord> {
+  const response = await supabaseRequest(config, "item_photos", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(photo),
+  });
+  const rows = (await response.json()) as ItemPhotoRecord[];
+  if (!rows[0]) throw new Error("Supabase did not return the created photo");
+  return rows[0];
+}
+
+export async function deleteItemPhoto(
+  config: SupabaseConfig,
+  itemId: string,
+  itemPhotoId: string,
+): Promise<ItemPhotoRecord | null> {
+  const response = await supabaseRequest(
+    config,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&item_photo_id=eq.${encodeURIComponent(itemPhotoId)}`,
+    {
+      method: "DELETE",
+      headers: { Prefer: "return=representation" },
+    },
+  );
+  const rows = (await response.json()) as ItemPhotoRecord[];
+  return rows[0] ?? null;
+}
+
+export async function deleteItemPhotosByRole(
+  config: SupabaseConfig,
+  itemId: string,
+  role: ItemPhotoRecord["role"],
+  exceptItemPhotoId: string,
+): Promise<ItemPhotoRecord[]> {
+  const response = await supabaseRequest(
+    config,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&role=eq.${role}&item_photo_id=neq.${encodeURIComponent(exceptItemPhotoId)}`,
+    {
+      method: "DELETE",
+      headers: { Prefer: "return=representation" },
+    },
+  );
+  return (await response.json()) as ItemPhotoRecord[];
 }

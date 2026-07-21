@@ -17,7 +17,7 @@ function matchesQuery(item: MockItem, query: string): boolean {
 }
 
 export function ItemListPage() {
-  const { items, deleteItem } = useItems();
+  const { items, itemsLoading, itemsError, deleteItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("mgmtNoAsc");
@@ -77,13 +77,17 @@ export function ItemListPage() {
     });
   }
 
-  function handleBulkDelete() {
+  async function handleBulkDelete() {
     const count = selectedIds.size;
     if (count === 0) return;
     if (!window.confirm(`選択した${count}件を商品一覧から削除しますか？`)) return;
-    selectedIds.forEach((id) => deleteItem(id));
-    setSelectedIds(new Set());
-    setSelectionMode(false);
+    try {
+      await Promise.all([...selectedIds].map((id) => deleteItem(id)));
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "商品の削除に失敗しました");
+    }
   }
 
   return (
@@ -155,7 +159,15 @@ export function ItemListPage() {
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {itemsLoading ? (
+        <div className="content">
+          <p style={{ color: "var(--text-secondary)" }}>商品一覧を読み込んでいます…</p>
+        </div>
+      ) : itemsError ? (
+        <div className="content">
+          <p className="form-error">{itemsError}</p>
+        </div>
+      ) : items.length === 0 ? (
         <div className="content">
           <p style={{ color: "var(--text-secondary)" }}>まだ商品がありません。「+ 新規登録」から最初の1件を登録してください。</p>
         </div>

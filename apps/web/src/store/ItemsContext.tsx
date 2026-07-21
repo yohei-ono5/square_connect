@@ -1,33 +1,47 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Item } from "@square-connect/shared";
 import type { MeasurePoints } from "@square-connect/measure";
 import { WORKER_BASE_URL } from "../lib/config";
+import {
+  createItem as createStoredItem,
+  deleteItemPhoto as deleteStoredPhoto,
+  deleteItem as deleteStoredItem,
+  listItemPhotos,
+  listItems,
+  saveItem as persistItem,
+  saveSquareRegistration as persistSquareRegistration,
+  type StoredPhoto,
+  uploadItemPhoto,
+} from "../lib/itemRepository";
 
 export type { MeasurePointKey, MeasurePoint, MeasurePoints } from "@square-connect/measure";
 
 // 正面写真だけが自動採寸のトリガーになる特別な役割。それ以外は撮る/撮らないが商品によって
 // 違うため、背面・タグ・襟元…のような固定カテゴリを設けず「追加写真」として自由に足せる。
 export type PhotoRole = "main" | "sub";
-export type MockPhoto = { id: string; role: PhotoRole; previewUrl: string };
+export type MockPhoto = StoredPhoto;
 
-// Supabaseに繋ぐまでの仮のモデル。item_photosはDBでは別テーブルだが、
-// ここではデモ用にItemへ持たせている。
+// 商品本体・写真情報はSupabaseへ、画像ファイル本体はCloudflare R2へ保存する。
 export type MockItem = Item & { photos: MockPhoto[]; measurePoints?: MeasurePoints };
 
 // 管理番号（SKU）はスタッフの手入力。共有カウンタでの自動採番はやめた。
-export type QuickRegisterInput = { mgmtNo: string; title: string; price: number; photoPreviewUrl?: string };
+export type QuickRegisterInput = { mgmtNo: string; title: string; price: number; photoFile?: File };
 
 // Square側で設定済みのカテゴリ（parentNameは親カテゴリがある場合のみ、表示用に「親 > 子」を組み立てる）。
 export type SquareCategory = { id: string; name: string; parentName: string | null };
 
 type ItemsContextValue = {
   items: MockItem[];
+  itemsLoading: boolean;
+  itemsError: string | null;
   getItem: (id: string) => MockItem | undefined;
-  addItem: (input: QuickRegisterInput) => MockItem;
-  deleteItem: (id: string) => void;
+  addItem: (input: QuickRegisterInput) => Promise<MockItem>;
+  deleteItem: (id: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
-  addPhoto: (id: string, role: PhotoRole, previewUrl: string) => void;
-  removePhoto: (id: string, photoId: string) => void;
+  saveItem: (id: string) => Promise<void>;
+  saveSquareRegistration: (id: string, squareObjectId: string, squareVariationId: string) => Promise<void>;
+  addPhoto: (id: string, role: PhotoRole, file: File) => Promise<void>;
+  removePhoto: (id: string, photoId: string) => Promise<void>;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
   squareCategories: SquareCategory[] | null;
   categoriesLoading: boolean;
@@ -37,75 +51,42 @@ type ItemsContextValue = {
 
 const ItemsContext = createContext<ItemsContextValue | null>(null);
 
-let photoIdCounter = 1;
-
-function nextId(): string {
-  // 再読み込み後もSquareの冪等性キーが重複しないよう、商品IDにはUUIDを使う。
-  return crypto.randomUUID();
-}
-
-function nextPhotoId(): string {
-  return `photo-${photoIdCounter++}`;
-}
-
-// シード用の簡易プレースホルダー画像（実際のアップロード写真が無いデモデータ用）
-const PLACEHOLDER_PHOTO =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#ccc"/></svg>',
-  );
-
-function makeItem(overrides: Partial<MockItem> & { mgmtNo: string }): MockItem {
-  return {
-    id: nextId(),
-    storeId: "store-1",
-    status: "draft",
-    title: "",
-    price: 0,
-    gender: null,
-    category: null,
-    size: null,
-    condition: null,
-    measurements: null,
-    description: null,
-    squareObjectId: null,
-    photos: [],
-    ...overrides,
-  };
-}
-
-// 一覧が空だと状態バッジの見え方を確認できないため、サンプルを2件だけ入れておく。
-const seedItems: MockItem[] = [
-  makeItem({
-    mgmtNo: "00604",
-    title: "ディズニー Tシャツ",
-    price: 3000,
-    gender: "unisex",
-    category: "キャラクターTシャツ",
-    size: "XL",
-    condition: "A",
-    measurements: { shoulderCm: 44.9, chestCm: 51.0, lengthCm: 67.4, sleeveCm: 17.1 },
-    squareObjectId: "sq-mock-seed-1",
-    photos: [{ id: nextPhotoId(), role: "main", previewUrl: PLACEHOLDER_PHOTO }],
-  }),
-  makeItem({
-    mgmtNo: "00605",
-    title: "バンドT ロックバンド",
-    price: 2500,
-    squareObjectId: "sq-mock-seed-2",
-  }),
-];
-
 function normalizeMgmtNo(mgmtNo: string): string {
   return mgmtNo.trim().toLowerCase();
 }
 
 export function ItemsProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<MockItem[]>(seedItems);
+  const [items, setItems] = useState<MockItem[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(true);
+  const [itemsError, setItemsError] = useState<string | null>(null);
   const [squareCategories, setSquareCategories] = useState<SquareCategory[] | null>(null);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const categoriesRequestedRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    setItemsLoading(true);
+    Promise.all([listItems(), listItemPhotos()])
+      .then(([storedItems, storedPhotos]) => {
+        if (!active) return;
+        setItems(storedItems.map((item) => ({
+          ...item,
+          photos: storedPhotos.filter((photo) => photo.itemId === item.id),
+        })));
+        setItemsError(null);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setItemsError(error instanceof Error ? error.message : "商品一覧の取得に失敗しました");
+      })
+      .finally(() => {
+        if (active) setItemsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // 詳細画面のuseEffectから安全に呼べるよう参照を固定する。失敗時も自動で再試行を
   // 繰り返さず、画面を開いている間は結果（成功・空・失敗）をそのまま表示する。
@@ -133,36 +114,64 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ItemsContextValue>(
     () => ({
       items,
+      itemsLoading,
+      itemsError,
       getItem: (id) => items.find((it) => it.id === id),
-      addItem: (input) => {
-        const item = makeItem({
+      addItem: async (input) => {
+        const storedItem = await createStoredItem({
           mgmtNo: input.mgmtNo.trim(),
-          title: input.title,
+          title: input.title.trim(),
           price: input.price,
-          photos: input.photoPreviewUrl
-            ? [{ id: nextPhotoId(), role: "main", previewUrl: input.photoPreviewUrl }]
-            : [],
         });
+        let item: MockItem = {
+          ...storedItem,
+          photos: [],
+        };
         setItems((prev) => [item, ...prev]);
+        if (input.photoFile) {
+          const photo = await uploadItemPhoto(item.id, "main", input.photoFile);
+          item = { ...item, photos: [photo] };
+          setItems((prev) => prev.map((candidate) => candidate.id === item.id ? item : candidate));
+        }
         return item;
       },
-      deleteItem: (id) => {
+      deleteItem: async (id) => {
+        const item = items.find((candidate) => candidate.id === id);
+        if (item) {
+          await Promise.all(item.photos.map((photo) => deleteStoredPhoto(id, photo.id)));
+        }
+        await deleteStoredItem(id);
         setItems((prev) => prev.filter((it) => it.id !== id));
       },
       updateItem: (id, patch) => {
         setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
       },
-      addPhoto: (id, role, previewUrl) => {
+      saveItem: async (id) => {
+        const item = items.find((candidate) => candidate.id === id);
+        if (!item) throw new Error("保存対象の商品が見つかりません");
+        await persistItem(item);
+      },
+      saveSquareRegistration: async (id, squareObjectId, squareVariationId) => {
+        await persistSquareRegistration(id, squareObjectId, squareVariationId);
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, status: "pushed", squareObjectId } : item,
+          ),
+        );
+      },
+      addPhoto: async (id, role, file) => {
+        const photo = await uploadItemPhoto(id, role, file);
         setItems((prev) =>
           prev.map((it) => {
             if (it.id !== id) return it;
             // 正面は1枚のみ（既存を置き換え）。追加写真は何枚でも足せる。
             const kept = role === "main" ? it.photos.filter((p) => p.role !== "main") : it.photos;
-            return { ...it, photos: [...kept, { id: nextPhotoId(), role, previewUrl }] };
+            return { ...it, photos: [...kept, photo] };
           }),
         );
       },
-      removePhoto: (id, photoId) => {
+      removePhoto: async (id, photoId) => {
+        await deleteStoredPhoto(id, photoId);
         setItems((prev) =>
           prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)),
         );
@@ -177,7 +186,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       // カテゴリはSquare側で頻繁に変わるものではないため、セッション中に1回だけ取得してキャッシュする。
       loadSquareCategories,
     }),
-    [items, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
+    [items, itemsLoading, itemsError, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
   );
 
   return <ItemsContext.Provider value={value}>{children}</ItemsContext.Provider>;
