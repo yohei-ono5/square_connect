@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useItems, type MockItem } from "../store/ItemsContext";
-import { StatusBadge } from "../components/StatusBadge";
+import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
 
-type StatusFilter = "all" | "registered" | "unregistered";
+type StatusFilter = "all" | "synced" | "pending" | "unregistered" | "deleted";
 type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
 
 function matchesQuery(item: MockItem, query: string): boolean {
@@ -22,7 +22,7 @@ export function ItemListPage() {
     notice?: string;
     noticeType?: "success" | "warning";
   } | null);
-  const { items, itemsLoading, itemsError, archiveItem } = useItems();
+  const { items, itemsLoading, itemsError, reloadItems, archiveItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("mgmtNoAsc");
@@ -32,22 +32,30 @@ export function ItemListPage() {
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const handleFocus = () => {
+      void reloadItems().catch((error: unknown) => {
+        console.error("Item list refresh on focus failed", error);
+      });
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [reloadItems]);
+
   const stats = useMemo(() => {
-    // squareObjectIdは「Squareに登録」のAPI呼び出しが成功した時だけセットされるため、
-    // それをそのまま登録済み判定に使う（詳細はArchitectureドキュメント参照）。
-    const squareRegistered = items.filter((it) => it.squareObjectId !== null).length;
+    const statuses = items.map(getSquareSyncStatus);
     return {
       total: items.length,
-      squareRegistered,
-      squareUnregistered: items.length - squareRegistered,
+      squareSynced: statuses.filter((status) => status === "synced").length,
+      squarePending: statuses.filter((status) => status === "pending").length,
+      squareUnregistered: statuses.filter((status) => status === "unregistered").length,
     };
   }, [items]);
 
   const visibleItems = useMemo(() => {
     const filtered = items.filter((it) => {
       if (!matchesQuery(it, query)) return false;
-      if (statusFilter === "registered") return it.squareObjectId !== null;
-      if (statusFilter === "unregistered") return it.squareObjectId === null;
+      if (statusFilter !== "all") return getSquareSyncStatus(it) === statusFilter;
       return true;
     });
     // mgmtNoは数字のみの想定（先頭ゼロは表示用の文字列としてのみ保持）なので、
@@ -158,10 +166,14 @@ export function ItemListPage() {
             <p className="stat-value">{stats.total}</p>
           </div>
           <div className="stat-card">
-            <p className="stat-label">Square登録済み</p>
+            <p className="stat-label">Square同期済み</p>
             <p className="stat-value" style={{ color: "var(--accent)" }}>
-              {stats.squareRegistered}
+              {stats.squareSynced}
             </p>
+          </div>
+          <div className="stat-card">
+            <p className="stat-label">Square未反映</p>
+            <p className="stat-value">{stats.squarePending}</p>
           </div>
           <div className="stat-card">
             <p className="stat-label">Square未登録</p>
@@ -178,8 +190,10 @@ export function ItemListPage() {
           />
           <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
             <option value="all">すべての状態</option>
-            <option value="registered">Square登録済み</option>
+            <option value="synced">Square同期済み</option>
+            <option value="pending">Square未反映</option>
             <option value="unregistered">Square未登録</option>
+            <option value="deleted">Square側で削除済み</option>
           </select>
           <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
             <option value="mgmtNoAsc">商品番号順（昇順）</option>

@@ -8,7 +8,7 @@ import {
   type MeasurePointKey,
 } from "@square-connect/measure";
 import { useItems, type PhotoRole } from "../store/ItemsContext";
-import { StatusBadge } from "../components/StatusBadge";
+import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 
@@ -64,6 +64,7 @@ export function ItemDetailPage() {
     saveSquareRegistration,
     syncPhotosToSquare,
     refreshItemFromSquare,
+    markSquareSynced,
     addPhoto,
     removePhoto,
     isMgmtNoTaken,
@@ -73,6 +74,7 @@ export function ItemDetailPage() {
     loadSquareCategories,
   } = useItems();
   const item = id ? getItem(id) : undefined;
+  const squareSyncStatus = item ? getSquareSyncStatus(item) : null;
   const [tab, setTab] = useState<TabKey>("basic");
   const [pendingRole, setPendingRole] = useState<PhotoRole | null>(null);
   const [activePoint, setActivePoint] = useState<MeasurePointKey | null>(null);
@@ -85,11 +87,30 @@ export function ItemDetailPage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const automaticSquareRefreshRef = useRef<string | null>(null);
   const saving = savingAction !== null;
 
   useEffect(() => {
     loadSquareCategories();
   }, [loadSquareCategories]);
+
+  useEffect(() => {
+    const squareObjectId = item?.squareObjectId;
+    if (
+      !id ||
+      !squareObjectId ||
+      squareSyncStatus !== "synced" ||
+      automaticSquareRefreshRef.current === squareObjectId
+    ) return;
+    automaticSquareRefreshRef.current = squareObjectId;
+    setRefreshingSquare(true);
+    setSaveError(null);
+    refreshItemFromSquare(id)
+      .catch((error: unknown) => {
+        setSaveError(error instanceof Error ? error.message : "Squareの最新情報を取得できませんでした");
+      })
+      .finally(() => setRefreshingSquare(false));
+  }, [id, item?.squareObjectId, squareSyncStatus, refreshItemFromSquare]);
 
   if (!item && itemsLoading) {
     return (
@@ -170,6 +191,7 @@ export function ItemDetailPage() {
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
         if (!response.ok) throw new Error(result?.message ?? "Squareの商品更新に失敗しました");
         const syncedPhotos = await syncPhotosToSquare(id);
+        await markSquareSynced(id);
         showToast(syncedPhotos > 0 ? `写真${syncedPhotos}枚を含めてSquareを更新しました` : "Squareを更新しました");
       } else {
         const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {

@@ -7,7 +7,7 @@
   --text-primary: #1f1e1b;
   --text-secondary: #6b6a64;
   --text-muted: #99968c;
-  --accent: #2f6fed;
+  --accent: #ea3325;
   --accent-text: #ffffff;
   --warning-bg: #fbe9c9;
   --warning-text: #7a4a06;
@@ -24,8 +24,8 @@
     --text-primary: #f2f0ea;
     --text-secondary: #b3b0a6;
     --text-muted: #837f74;
-    --accent: #6d9bff;
-    --accent-text: #171613;
+    --accent: #ea3325;
+    --accent-text: #ffffff;
     --warning-bg: #4a3812;
     --warning-text: #f6cf7f;
   }
@@ -159,6 +159,16 @@ h1 {
 .badge-neutral {
   background: var(--surface-muted);
   color: var(--text-secondary);
+}
+
+.badge-success {
+  background: #e9f6ec;
+  color: #26733a;
+}
+
+.badge-danger {
+  background: #fce8e6;
+  color: #b42318;
 }
 
 .list {
@@ -433,7 +443,7 @@ h1 {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }

@@ -40,6 +40,9 @@ export const ItemSchema = z.object({
     .nullable(),
   description: z.string().nullable(),
   squareObjectId: z.string().nullable(),
+  updatedAt: z.string().optional(),
+  squareSyncedAt: z.string().nullable().optional(),
+  squareDeletedAt: z.string().nullable().optional(),
 });
 export type Item = z.infer<typeof ItemSchema>;
 

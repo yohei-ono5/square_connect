@@ -40,6 +40,9 @@ type ItemRow = {
   m_sleeve: number | null;
   description: string | null;
   square_object_id: string | null;
+  updated_at: string;
+  square_synced_at: string | null;
+  square_deleted_at: string | null;
 };
 
 const ITEM_COLUMNS = [
@@ -59,6 +62,9 @@ const ITEM_COLUMNS = [
   "m_sleeve",
   "description",
   "square_object_id",
+  "updated_at",
+  "square_synced_at",
+  "square_deleted_at",
 ].join(",");
 
 let defaultStoreIdPromise: Promise<string> | null = null;
@@ -87,6 +93,9 @@ function rowToItem(row: ItemRow): Item {
       : null,
     description: row.description,
     squareObjectId: row.square_object_id,
+    updatedAt: row.updated_at,
+    squareSyncedAt: row.square_synced_at,
+    squareDeletedAt: row.square_deleted_at,
   };
 }
 
@@ -198,6 +207,7 @@ export type SquareItemRefresh = {
   title?: string;
   price?: number;
   description: string | null;
+  syncedAt: string;
 };
 
 export async function refreshItemFromSquare(itemId: string): Promise<SquareItemRefresh> {
@@ -206,12 +216,12 @@ export async function refreshItemFromSquare(itemId: string): Promise<SquareItemR
     { method: "POST" },
   );
   const result = (await response.json().catch(() => null)) as
-    | { item?: SquareItemRefresh; message?: string }
+    | { item?: Omit<SquareItemRefresh, "syncedAt">; syncedAt?: string; message?: string }
     | null;
   if (!response.ok || !result?.item) {
     throw new Error(result?.message ?? "Squareの最新情報を取得できませんでした");
   }
-  return result.item;
+  return { ...result.item, syncedAt: result.syncedAt ?? new Date().toISOString() };
 }
 
 export async function deleteItemPhoto(itemId: string, itemPhotoId: string): Promise<void> {
@@ -244,7 +254,8 @@ export async function createItem(input: {
   return rowToItem(result.data as unknown as ItemRow);
 }
 
-export async function saveItem(item: Item): Promise<void> {
+export async function saveItem(item: Item): Promise<string> {
+  const updatedAt = new Date().toISOString();
   const result = await getSupabase()
     .from("items")
     .update({
@@ -261,17 +272,18 @@ export async function saveItem(item: Item): Promise<void> {
       m_length: item.measurements?.lengthCm ?? null,
       m_sleeve: item.measurements?.sleeveCm ?? null,
       description: item.description,
-      updated_at: new Date().toISOString(),
+      updated_at: updatedAt,
     })
     .eq("item_id", item.id);
   if (result.error) throw repositoryError("商品の更新に失敗しました", result.error);
+  return updatedAt;
 }
 
 export async function saveSquareRegistration(
   itemId: string,
   squareObjectId: string,
   squareVariationId: string,
-): Promise<void> {
+): Promise<string> {
   const now = new Date().toISOString();
   const result = await getSupabase()
     .from("items")
@@ -284,6 +296,17 @@ export async function saveSquareRegistration(
     })
     .eq("item_id", itemId);
   if (result.error) throw repositoryError("Square登録結果の保存に失敗しました", result.error);
+  return now;
+}
+
+export async function markItemSquareSynced(itemId: string): Promise<string> {
+  const syncedAt = new Date().toISOString();
+  const result = await getSupabase()
+    .from("items")
+    .update({ square_synced_at: syncedAt, square_deleted_at: null })
+    .eq("item_id", itemId);
+  if (result.error) throw repositoryError("Square同期結果の保存に失敗しました", result.error);
+  return syncedAt;
 }
 
 export async function archiveItem(itemId: string): Promise<void> {

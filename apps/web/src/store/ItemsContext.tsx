@@ -9,6 +9,7 @@ import {
   discardUnregisteredItem,
   listItemPhotos,
   listItems,
+  markItemSquareSynced,
   refreshItemFromSquare as refreshStoredItemFromSquare,
   saveItem as persistItem,
   saveSquareRegistration as persistSquareRegistration,
@@ -37,6 +38,7 @@ type ItemsContextValue = {
   items: MockItem[];
   itemsLoading: boolean;
   itemsError: string | null;
+  reloadItems: () => Promise<void>;
   getItem: (id: string) => MockItem | undefined;
   addItem: (input: QuickRegisterInput) => Promise<MockItem>;
   archiveItem: (id: string) => Promise<void>;
@@ -48,6 +50,7 @@ type ItemsContextValue = {
   addPhoto: (id: string, role: PhotoRole, file: File) => Promise<string | null>;
   removePhoto: (id: string, photoId: string) => Promise<void>;
   refreshItemFromSquare: (id: string) => Promise<void>;
+  markSquareSynced: (id: string) => Promise<void>;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
   squareCategories: SquareCategory[] | null;
   categoriesLoading: boolean;
@@ -70,18 +73,19 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const categoriesRequestedRef = useRef(false);
 
+  const reloadItems = useCallback(async () => {
+    const [storedItems, storedPhotos] = await Promise.all([listItems(), listItemPhotos()]);
+    setItems(storedItems.map((item) => ({
+      ...item,
+      photos: storedPhotos.filter((photo) => photo.itemId === item.id),
+    })));
+    setItemsError(null);
+  }, []);
+
   useEffect(() => {
     let active = true;
     setItemsLoading(true);
-    Promise.all([listItems(), listItemPhotos()])
-      .then(([storedItems, storedPhotos]) => {
-        if (!active) return;
-        setItems(storedItems.map((item) => ({
-          ...item,
-          photos: storedPhotos.filter((photo) => photo.itemId === item.id),
-        })));
-        setItemsError(null);
-      })
+    reloadItems()
       .catch((error: unknown) => {
         if (!active) return;
         setItemsError(error instanceof Error ? error.message : "商品一覧の取得に失敗しました");
@@ -92,7 +96,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadItems]);
 
   // 詳細画面のuseEffectから安全に呼べるよう参照を固定する。失敗時も自動で再試行を
   // 繰り返さず、画面を開いている間は結果（成功・空・失敗）をそのまま表示する。
@@ -122,6 +126,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       items,
       itemsLoading,
       itemsError,
+      reloadItems,
       getItem: (id) => items.find((it) => it.id === id),
       addItem: async (input) => {
         const storedItem = await createStoredItem({
@@ -174,13 +179,25 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       saveItem: async (id) => {
         const item = items.find((candidate) => candidate.id === id);
         if (!item) throw new Error("保存対象の商品が見つかりません");
-        await persistItem(item);
+        const updatedAt = await persistItem(item);
+        setItems((prev) => prev.map((candidate) => candidate.id === id
+          ? { ...candidate, updatedAt }
+          : candidate));
       },
       saveSquareRegistration: async (id, squareObjectId, squareVariationId) => {
-        await persistSquareRegistration(id, squareObjectId, squareVariationId);
+        const syncedAt = await persistSquareRegistration(id, squareObjectId, squareVariationId);
         setItems((prev) =>
           prev.map((item) =>
-            item.id === id ? { ...item, status: "pushed", squareObjectId } : item,
+            item.id === id
+              ? {
+                  ...item,
+                  status: "pushed",
+                  squareObjectId,
+                  updatedAt: syncedAt,
+                  squareSyncedAt: syncedAt,
+                  squareDeletedAt: null,
+                }
+              : item,
           ),
         );
       },
@@ -205,17 +222,29 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       },
       refreshItemFromSquare: async (id) => {
         const latest = await refreshStoredItemFromSquare(id);
-        if (latest.isDeleted) throw new Error("Square側ではこの商品が削除されています");
         setItems((prev) => prev.map((item) => {
           if (item.id !== id) return item;
+          if (latest.isDeleted) {
+            return { ...item, updatedAt: latest.syncedAt, squareSyncedAt: latest.syncedAt, squareDeletedAt: latest.syncedAt };
+          }
           return {
             ...item,
             ...(latest.mgmtNo !== undefined ? { mgmtNo: latest.mgmtNo } : {}),
             ...(latest.title !== undefined ? { title: latest.title } : {}),
             ...(latest.price !== undefined ? { price: latest.price } : {}),
             description: latest.description,
+            updatedAt: latest.syncedAt,
+            squareSyncedAt: latest.syncedAt,
+            squareDeletedAt: null,
           };
         }));
+        if (latest.isDeleted) throw new Error("Square側ではこの商品が削除されています");
+      },
+      markSquareSynced: async (id) => {
+        const syncedAt = await markItemSquareSynced(id);
+        setItems((prev) => prev.map((item) => item.id === id
+          ? { ...item, squareSyncedAt: syncedAt, squareDeletedAt: null }
+          : item));
       },
       // 手入力のSKUが商品一覧内で既に使われていないかの事前チェック（Square側の重複チェックとは別に、
       // ローカルの下書き同士の衝突もここで防ぐ）。
@@ -227,7 +256,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       // カテゴリはSquare側で頻繁に変わるものではないため、セッション中に1回だけ取得してキャッシュする。
       loadSquareCategories,
     }),
-    [items, itemsLoading, itemsError, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
+    [items, itemsLoading, itemsError, reloadItems, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
   );
 
   return <ItemsContext.Provider value={value}>{children}</ItemsContext.Provider>;
@@ -240,4 +269,4 @@ export function useItems() {
 }
 
 // 詳細入力状況（写真・採寸・基本情報が埋まっているか）のトラッキングは、一旦廃止して作り直す予定。
-// バッジ・フィルタ・統計は当面 squareObjectId（Square登録済みかどうか）だけを基準にする。
+// 一覧のバッジ・フィルタ・統計はSquareへの登録・同期状態を基準にする。
