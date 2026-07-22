@@ -85,10 +85,47 @@ describe("item photo storage", () => {
       photo: { itemId, role: "main", previewUrl: expect.stringContaining(`/media/items/${itemId}/`) },
     });
     expect(r2Put).toHaveBeenCalledOnce();
+    expect(r2Put.mock.calls[0][1]).toBeInstanceOf(ArrayBuffer);
     expect(String(r2Put.mock.calls[0][0])).toMatch(new RegExp(`^items/${itemId}/[0-9a-f-]+\\.png$`));
     expect(fetchSpy.mock.calls[0][0]).toBe("https://project.supabase.co/rest/v1/item_photos");
     expect(fetchSpy.mock.calls[1][0]).toContain(`items?item_id=eq.${itemId}&select=square_object_id`);
     expect(fetchSpy.mock.calls[2][0]).toContain(`item_photos?item_id=eq.${itemId}&role=eq.main`);
+  });
+
+  it("keeps a saved photo when only the Square item lookup fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
+    const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{
+        item_photo_id: itemPhotoId,
+        item_id: itemId,
+        role: "main",
+        storage_path: `items/${itemId}/${itemPhotoId}.png`,
+        square_image_id: null,
+        width: null,
+        height: null,
+        sort: 0,
+      }], 201))
+      .mockResolvedValueOnce(squareResponse({ message: "temporary failure" }, 500));
+    const body = new FormData();
+    body.append("role", "main");
+    body.append(
+      "file",
+      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])], "item.png", {
+        type: "image/png",
+      }),
+    );
+
+    const response = await app.request(`/api/items/${itemId}/photos`, { method: "POST", body }, env);
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      photo: { id: itemPhotoId },
+      squareSyncWarning: "写真は保存しましたが、Squareの商品画像への反映に失敗しました",
+    });
+    expect(r2Put).toHaveBeenCalledOnce();
+    expect(r2Delete).not.toHaveBeenCalled();
   });
 
   it("rejects WebP before writing to R2", async () => {

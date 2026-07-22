@@ -191,7 +191,10 @@ app.post("/api/items/:id/photos", async (c) => {
   const database = supabaseConfig(c.env);
 
   try {
-    await c.env.ITEM_IMAGES.put(storagePath, file.stream(), {
+    // multipart/form-dataから得たFileのstreamは長さ不明として扱われる場合がある。
+    // R2は長さ不明のstreamを拒否するため、上限15MBを検証したうえでArrayBufferとして保存する。
+    const imageBytes = await file.arrayBuffer();
+    await c.env.ITEM_IMAGES.put(storagePath, imageBytes, {
       httpMetadata: { contentType },
       customMetadata: { itemId, itemPhotoId, role },
     });
@@ -213,9 +216,19 @@ app.post("/api/items/:id/photos", async (c) => {
       throw error;
     }
 
-    const squareObjectId = await getItemSquareObjectId(database, itemId);
     let squareSyncWarning: string | undefined;
     let squareImageSynced = false;
+    let squareLookupSucceeded = false;
+    let squareObjectId: string | null = null;
+    try {
+      squareObjectId = await getItemSquareObjectId(database, itemId);
+      squareLookupSucceeded = true;
+    } catch (error) {
+      // R2とSupabaseへの写真保存は完了しているため、Square状態の確認失敗を
+      // 写真保存全体の失敗として返さない。再試行は詳細画面の「Squareを更新」で行える。
+      console.error("Photo saved but Square item lookup failed", error);
+      squareSyncWarning = "写真は保存しましたが、Squareの商品画像への反映に失敗しました";
+    }
     if (squareObjectId) {
       try {
         const squareImageId = await syncPhotoToSquare(c.env, photo, squareObjectId);
@@ -227,7 +240,7 @@ app.post("/api/items/:id/photos", async (c) => {
       }
     }
 
-    if (role === "main" && (!squareObjectId || squareImageSynced)) {
+    if (role === "main" && squareLookupSucceeded && (!squareObjectId || squareImageSynced)) {
       try {
         const replaced = await deleteItemPhotosByRole(database, itemId, role, itemPhotoId);
         for (const oldPhoto of replaced) {
