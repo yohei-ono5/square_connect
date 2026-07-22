@@ -5,7 +5,7 @@ import { WORKER_BASE_URL } from "../lib/config";
 import {
   createItem as createStoredItem,
   deleteItemPhoto as deleteStoredPhoto,
-  deleteItem as deleteStoredItem,
+  archiveItem as archiveStoredItem,
   discardUnregisteredItem,
   listItemPhotos,
   listItems,
@@ -38,7 +38,7 @@ type ItemsContextValue = {
   itemsError: string | null;
   getItem: (id: string) => MockItem | undefined;
   addItem: (input: QuickRegisterInput) => Promise<MockItem>;
-  deleteItem: (id: string) => Promise<void>;
+  archiveItem: (id: string) => Promise<void>;
   discardItem: (id: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   saveItem: (id: string) => Promise<void>;
@@ -147,12 +147,10 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         }
         return item;
       },
-      deleteItem: async (id) => {
-        const item = items.find((candidate) => candidate.id === id);
-        if (item) {
-          await Promise.all(item.photos.map((photo) => deleteStoredPhoto(id, photo.id)));
-        }
-        await deleteStoredItem(id);
+      archiveItem: async (id) => {
+        // アーカイブではSquareやR2のデータを変更せず、Supabase上で一覧から
+        // 非表示にするだけに留める。Squareの商品IDと写真はそのまま保持する。
+        await archiveStoredItem(id);
         setItems((prev) => prev.filter((it) => it.id !== id));
       },
       discardItem: async (id) => {

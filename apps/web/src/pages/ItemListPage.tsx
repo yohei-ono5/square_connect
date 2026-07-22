@@ -17,12 +17,15 @@ function matchesQuery(item: MockItem, query: string): boolean {
 }
 
 export function ItemListPage() {
-  const { items, itemsLoading, itemsError, deleteItem } = useItems();
+  const { items, itemsLoading, itemsError, archiveItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("mgmtNoAsc");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     // squareObjectIdは「Squareに登録」のAPI呼び出しが成功した時だけセットされるため、
@@ -77,16 +80,32 @@ export function ItemListPage() {
     });
   }
 
-  async function handleBulkDelete() {
+  function openArchiveDialog() {
+    if (selectedIds.size === 0) return;
+    setArchiveError(null);
+    setArchiveDialogOpen(true);
+  }
+
+  function closeArchiveDialog() {
+    if (archiving) return;
+    setArchiveDialogOpen(false);
+    setArchiveError(null);
+  }
+
+  async function handleBulkArchive() {
     const count = selectedIds.size;
     if (count === 0) return;
-    if (!window.confirm(`選択した${count}件を商品一覧から削除しますか？`)) return;
+    setArchiving(true);
+    setArchiveError(null);
     try {
-      await Promise.all([...selectedIds].map((id) => deleteItem(id)));
+      await Promise.all([...selectedIds].map((id) => archiveItem(id)));
       setSelectedIds(new Set());
       setSelectionMode(false);
+      setArchiveDialogOpen(false);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "商品の削除に失敗しました");
+      setArchiveError(error instanceof Error ? error.message : "商品のアーカイブに失敗しました");
+    } finally {
+      setArchiving(false);
     }
   }
 
@@ -101,8 +120,8 @@ export function ItemListPage() {
                 <button type="button" className="btn" onClick={toggleSelectionMode}>
                   キャンセル
                 </button>
-                <button type="button" className="btn btn-danger" disabled={selectedIds.size === 0} onClick={handleBulkDelete}>
-                  削除
+                <button type="button" className="btn btn-archive" disabled={selectedIds.size === 0} onClick={openArchiveDialog}>
+                  アーカイブ
                 </button>
               </>
             ) : (
@@ -210,6 +229,36 @@ export function ItemListPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {archiveDialogOpen && (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={closeArchiveDialog}>
+          <div
+            className="dialog-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="archive-dialog-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="archive-dialog-title" className="dialog-title">商品をアーカイブしますか？</h2>
+            <p className="dialog-message">
+              選択した{selectedIds.size}件を商品一覧から非表示にします。
+            </p>
+            <p className="dialog-note">
+              Square側の商品・写真は削除されず、そのまま残ります。R2の写真も削除されません。Supabaseの商品はアーカイブとして保存され、通常の商品一覧には表示されなくなります。
+              アーカイブ後もSKUは使用済みとして保持され、同じSKUでは新しい商品を登録できません。
+            </p>
+            {archiveError && <p className="form-error" role="alert">{archiveError}</p>}
+            <div className="dialog-actions">
+              <button type="button" className="btn" onClick={closeArchiveDialog} disabled={archiving}>
+                キャンセル
+              </button>
+              <button type="button" className="btn btn-archive-solid" onClick={handleBulkArchive} disabled={archiving}>
+                {archiving ? "アーカイブ中…" : "アーカイブする"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

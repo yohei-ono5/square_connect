@@ -263,17 +263,17 @@ export async function saveSquareRegistration(
   if (result.error) throw repositoryError("Square登録結果の保存に失敗しました", result.error);
 }
 
-export async function deleteItem(itemId: string): Promise<void> {
+export async function archiveItem(itemId: string): Promise<void> {
   const now = new Date().toISOString();
   const result = await getSupabase()
     .from("items")
     .update({ deleted_at: now, updated_at: now })
     .eq("item_id", itemId);
-  if (result.error) throw repositoryError("商品の削除に失敗しました", result.error);
+  if (result.error) throw repositoryError("商品のアーカイブに失敗しました", result.error);
 }
 
 // Square登録に失敗した新規商品だけを完全破棄する。Square IDが付いた商品は誤って
-// 消さないよう条件に含め、通常の商品削除（論理削除）とは明確に分ける。
+// 消さないよう条件に含め、通常の商品アーカイブ（論理削除）とは明確に分ける。
 export async function discardUnregisteredItem(itemId: string): Promise<void> {
   const result = await getSupabase()
     .from("items")
