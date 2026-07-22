@@ -387,6 +387,53 @@ export type SquareItemSnapshot = {
   description?: string;
 };
 
+function catalogItemToSnapshot(item: CatalogItemObject): SquareItemSnapshot | null {
+  if (!item.id || item.type !== "ITEM") return null;
+  if (item.is_deleted) {
+    return { squareObjectId: item.id, version: item.version, isDeleted: true };
+  }
+
+  const variation = item.item_data?.variations?.find(
+    (candidate) => candidate.type === "ITEM_VARIATION" && !candidate.is_deleted,
+  );
+  const variationData = variation?.item_variation_data;
+  const mgmtNo = variationData?.sku;
+  const squareName = item.item_data?.name;
+  const suffix = mgmtNo ? ` ${mgmtNo}` : "";
+  const title = squareName && suffix && squareName.endsWith(suffix)
+    ? squareName.slice(0, -suffix.length)
+    : squareName;
+
+  return {
+    squareObjectId: item.id,
+    squareVariationId: variation?.id,
+    version: item.version,
+    isDeleted: false,
+    mgmtNo,
+    title,
+    price: variationData?.price_money?.amount,
+    description: item.item_data?.description,
+  };
+}
+
+export async function retrieveSquareItem(
+  config: SquareConfig,
+  squareObjectId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<SquareItemSnapshot> {
+  if (!config.accessToken) throw new Error("SQUARE_ACCESS_TOKEN is not configured");
+  const retrieved = await squareRequest<RetrieveCatalogResponse>(
+    config,
+    `/v2/catalog/object/${encodeURIComponent(squareObjectId)}?include_related_objects=true`,
+    undefined,
+    fetcher,
+    "GET",
+  );
+  const snapshot = retrieved.object ? catalogItemToSnapshot(retrieved.object) : null;
+  if (!snapshot) throw new SquareApiError(404, [{ detail: "Square item was not found" }]);
+  return snapshot;
+}
+
 export async function searchChangedSquareItems(
   config: SquareConfig,
   beginTime: string,
@@ -413,33 +460,9 @@ export async function searchChangedSquareItems(
     cursor = page.cursor;
   } while (cursor);
 
-  return objects.flatMap((item): SquareItemSnapshot[] => {
-    if (!item.id || item.type !== "ITEM") return [];
-    if (item.is_deleted) {
-      return [{ squareObjectId: item.id, version: item.version, isDeleted: true }];
-    }
-
-    const variation = item.item_data?.variations?.find(
-      (candidate) => candidate.type === "ITEM_VARIATION" && !candidate.is_deleted,
-    );
-    const variationData = variation?.item_variation_data;
-    const mgmtNo = variationData?.sku;
-    const squareName = item.item_data?.name;
-    const suffix = mgmtNo ? ` ${mgmtNo}` : "";
-    const title = squareName && suffix && squareName.endsWith(suffix)
-      ? squareName.slice(0, -suffix.length)
-      : squareName;
-
-    return [{
-      squareObjectId: item.id,
-      squareVariationId: variation?.id,
-      version: item.version,
-      isDeleted: false,
-      mgmtNo,
-      title,
-      price: variationData?.price_money?.amount,
-      description: item.item_data?.description,
-    }];
+  return objects.flatMap((item) => {
+    const snapshot = catalogItemToSnapshot(item);
+    return snapshot ? [snapshot] : [];
   });
 }
 

@@ -191,6 +191,29 @@ export async function syncItemPhotosToSquare(itemId: string): Promise<number> {
   return result?.synced ?? 0;
 }
 
+export type SquareItemRefresh = {
+  squareObjectId: string;
+  isDeleted: boolean;
+  mgmtNo?: string;
+  title?: string;
+  price?: number;
+  description: string | null;
+};
+
+export async function refreshItemFromSquare(itemId: string): Promise<SquareItemRefresh> {
+  const response = await fetch(
+    `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/sync-from-square`,
+    { method: "POST" },
+  );
+  const result = (await response.json().catch(() => null)) as
+    | { item?: SquareItemRefresh; message?: string }
+    | null;
+  if (!response.ok || !result?.item) {
+    throw new Error(result?.message ?? "Squareの最新情報を取得できませんでした");
+  }
+  return result.item;
+}
+
 export async function deleteItemPhoto(itemId: string, itemPhotoId: string): Promise<void> {
   const response = await fetch(
     `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos/${encodeURIComponent(itemPhotoId)}`,

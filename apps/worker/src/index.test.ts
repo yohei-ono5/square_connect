@@ -196,8 +196,7 @@ describe("POST /api/items/:id/register-to-square", () => {
             { client_object_id: "#variation", object_id: "square-variation-1" },
           ],
         }),
-      )
-      .mockResolvedValueOnce(squareResponse([]));
+      );
 
     const response = await app.request(
       "/api/items/7d61/register-to-square",
@@ -214,7 +213,8 @@ describe("POST /api/items/:id/register-to-square", () => {
       squareObjectId: "square-item-1",
       squareVariationId: "square-variation-1",
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    // 写真が添付されていないため、Supabaseの写真取得やSquare画像同期は行わない。
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
 
     const [searchUrl, searchInit] = fetchSpy.mock.calls[0];
     expect(searchUrl).toBe("https://connect.squareupsandbox.com/v2/catalog/search");
@@ -241,6 +241,64 @@ describe("POST /api/items/:id/register-to-square", () => {
           ],
         },
       },
+    });
+  });
+
+  it("retrieves the exact Square item by its stored object ID and updates Supabase", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{ square_object_id: "square-item-1" }]))
+      .mockResolvedValueOnce(squareResponse({
+        object: {
+          type: "ITEM",
+          id: "square-item-1",
+          version: 123,
+          item_data: {
+            name: "更新後の商品 T0100",
+            description: "Squareで更新した説明",
+            variations: [{
+              type: "ITEM_VARIATION",
+              id: "square-variation-1",
+              item_variation_data: {
+                item_id: "square-item-1",
+                sku: "T0100",
+                price_money: { amount: 4500, currency: "JPY" },
+              },
+            }],
+          },
+        },
+      }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const response = await app.request(
+      "/api/items/item-1/sync-from-square",
+      { method: "POST" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      item: {
+        squareObjectId: "square-item-1",
+        isDeleted: false,
+        mgmtNo: "T0100",
+        title: "更新後の商品",
+        price: 4500,
+        description: "Squareで更新した説明",
+      },
+    });
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/catalog/object/square-item-1?include_related_objects=true",
+    );
+    expect(fetchSpy.mock.calls[1][1]?.method).toBe("GET");
+    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+      mgmt_no: "T0100",
+      title: "更新後の商品",
+      price: 4500,
+      description: "Squareで更新した説明",
+      square_variation_id: "square-variation-1",
+      square_version: 123,
+      square_deleted_at: null,
     });
   });
 
@@ -310,7 +368,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mgmtNo: "T0090", title: "画像付きTシャツ", price: 3000 }),
+        body: JSON.stringify({ mgmtNo: "T0090", title: "画像付きTシャツ", price: 3000, hasPhotos: true }),
       },
       env,
     );
@@ -359,7 +417,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mgmtNo: "T0091", title: "画像失敗", price: 3000 }),
+        body: JSON.stringify({ mgmtNo: "T0091", title: "画像失敗", price: 3000, hasPhotos: true }),
       },
       env,
     );

@@ -9,6 +9,7 @@ import {
   discardUnregisteredItem,
   listItemPhotos,
   listItems,
+  refreshItemFromSquare as refreshStoredItemFromSquare,
   saveItem as persistItem,
   saveSquareRegistration as persistSquareRegistration,
   syncItemPhotosToSquare as syncStoredPhotosToSquare,
@@ -46,6 +47,7 @@ type ItemsContextValue = {
   syncPhotosToSquare: (id: string) => Promise<number>;
   addPhoto: (id: string, role: PhotoRole, file: File) => Promise<string | null>;
   removePhoto: (id: string, photoId: string) => Promise<void>;
+  refreshItemFromSquare: (id: string) => Promise<void>;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
   squareCategories: SquareCategory[] | null;
   categoriesLoading: boolean;
@@ -200,6 +202,20 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         setItems((prev) =>
           prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)),
         );
+      },
+      refreshItemFromSquare: async (id) => {
+        const latest = await refreshStoredItemFromSquare(id);
+        if (latest.isDeleted) throw new Error("Square側ではこの商品が削除されています");
+        setItems((prev) => prev.map((item) => {
+          if (item.id !== id) return item;
+          return {
+            ...item,
+            ...(latest.mgmtNo !== undefined ? { mgmtNo: latest.mgmtNo } : {}),
+            ...(latest.title !== undefined ? { title: latest.title } : {}),
+            ...(latest.price !== undefined ? { price: latest.price } : {}),
+            description: latest.description,
+          };
+        }));
       },
       // 手入力のSKUが商品一覧内で既に使われていないかの事前チェック（Square側の重複チェックとは別に、
       // ローカルの下書き同士の衝突もここで防ぐ）。

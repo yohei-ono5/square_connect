@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useItems, type MockItem } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -17,6 +17,11 @@ function matchesQuery(item: MockItem, query: string): boolean {
 }
 
 export function ItemListPage() {
+  const location = useLocation();
+  const navigationNotice = (location.state as {
+    notice?: string;
+    noticeType?: "success" | "warning";
+  } | null);
   const { items, itemsLoading, itemsError, archiveItem } = useItems();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -139,6 +144,14 @@ export function ItemListPage() {
       </div>
 
       <div className="content" style={{ paddingBottom: 0 }}>
+        {navigationNotice?.notice && (
+          <p
+            className={`list-notice ${navigationNotice.noticeType === "warning" ? "list-notice-warning" : ""}`}
+            role="status"
+          >
+            {navigationNotice.notice}
+          </p>
+        )}
         <div className="stat-grid">
           <div className="stat-card">
             <p className="stat-label">総数</p>
@@ -245,8 +258,7 @@ export function ItemListPage() {
               選択した{selectedIds.size}件を商品一覧から非表示にします。
             </p>
             <p className="dialog-note">
-              Square側の商品・写真は削除されず、そのまま残ります。R2の写真も削除されません。Supabaseの商品はアーカイブとして保存され、通常の商品一覧には表示されなくなります。
-              アーカイブ後もSKUは使用済みとして保持され、同じSKUでは新しい商品を登録できません。
+              Square側の商品・写真は削除されず、そのまま残ります。
             </p>
             {archiveError && <p className="form-error" role="alert">{archiveError}</p>}
             <div className="dialog-actions">

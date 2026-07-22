@@ -42,14 +42,13 @@ export function QuickRegisterPage() {
       return;
     }
     try {
-      const item = await addItem({
+      await addItem({
         mgmtNo: mgmtNo.trim(),
         title: title.trim(),
         price: Number(price),
         photoFile: photoFile ?? undefined,
       });
-      // 時間に余裕があるスタッフはそのまま詳細編集画面で続きを入力できるよう、一覧ではなく詳細へ遷移する。
-      navigate(`/items/${item.id}`);
+      navigate("/", { state: { notice: "下書きに保存しました", noticeType: "success" } });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "商品の保存に失敗しました");
       setSubmitting(false);
@@ -84,6 +83,7 @@ export function QuickRegisterPage() {
           mgmtNo: item.mgmtNo,
           title: item.title,
           price: item.price,
+          hasPhotos: photoFile !== null,
         }),
       });
       const result = (await response.json().catch(() => null)) as
@@ -96,8 +96,11 @@ export function QuickRegisterPage() {
 
       squareRegistered = true;
       await saveSquareRegistration(item.id, result.squareObjectId, result.squareVariationId);
-      navigate(`/items/${item.id}`, {
-        state: result.imageSyncWarning ? { notice: result.imageSyncWarning } : undefined,
+      navigate("/", {
+        state: {
+          notice: result.imageSyncWarning ?? "Squareに登録しました",
+          noticeType: result.imageSyncWarning ? "warning" : "success",
+        },
       });
     } catch (error) {
       let message = error instanceof Error ? error.message : "Squareへの登録に失敗しました";
@@ -173,11 +176,14 @@ export function QuickRegisterPage() {
           <input
             id="price"
             className="input"
-            type="number"
-            min={0}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             placeholder="例：3000"
             value={price}
-            onChange={(e) => setPrice(e.target.value)}
+            onChange={(e) => {
+              if (/^\d*$/.test(e.target.value)) setPrice(e.target.value);
+            }}
           />
         </div>
         <div className="field">

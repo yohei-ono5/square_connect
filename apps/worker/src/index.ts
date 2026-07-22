@@ -6,6 +6,7 @@ import {
   DuplicateSkuError,
   listSquareCategories,
   registerItemInSquare,
+  retrieveSquareItem,
   SquareApiError,
   searchChangedSquareItems,
   updateItemInSquare,
@@ -432,14 +433,16 @@ app.post("/api/items/:id/register-to-square", async (c) => {
       `square-connect-item-${itemId}`,
     );
     let imageSyncWarning: string | undefined;
-    try {
-      const imageSync = await syncItemPhotosToSquare(c.env, itemId, result.squareObjectId);
-      if (imageSync.failures.length) {
-        imageSyncWarning = "商品は登録しましたが、一部の写真をSquareへ反映できませんでした";
+    if (parsed.data.hasPhotos) {
+      try {
+        const imageSync = await syncItemPhotosToSquare(c.env, itemId, result.squareObjectId);
+        if (imageSync.failures.length) {
+          imageSyncWarning = "商品は登録しましたが、一部の写真をSquareへ反映できませんでした";
+        }
+      } catch (error) {
+        console.error("Square item created but image sync failed", error);
+        imageSyncWarning = "商品は登録しましたが、写真をSquareへ反映できませんでした";
       }
-    } catch (error) {
-      console.error("Square item created but image sync failed", error);
-      imageSyncWarning = "商品は登録しましたが、写真をSquareへ反映できませんでした";
     }
     return c.json({
       ...result,
@@ -501,6 +504,63 @@ app.patch("/api/items/:id/square", async (c) => {
     }
     console.error("Square update failed", error);
     return c.json({ error: "configuration_error", message: "Square連携の設定を確認してください" }, 500);
+  }
+});
+
+app.post("/api/items/:id/sync-from-square", async (c) => {
+  const itemId = c.req.param("id");
+  if (!isValidItemId(itemId)) {
+    return c.json({ error: "invalid_item_id", message: "商品IDが不正です" }, 400);
+  }
+
+  try {
+    const database = supabaseConfig(c.env);
+    const squareObjectId = await getItemSquareObjectId(database, itemId);
+    if (!squareObjectId) {
+      return c.json({ error: "item_not_registered", message: "この商品はSquareに登録されていません" }, 409);
+    }
+
+    // Supabaseに保存済みのSquare商品IDだけを取得対象にし、SKU検索による別商品の
+    // 誤更新を避ける。
+    const snapshot = await retrieveSquareItem(squareConfig(c.env), squareObjectId);
+    const syncedAt = new Date().toISOString();
+    await updateItemBySquareId(database, squareObjectId, snapshot.isDeleted
+      ? {
+          square_version: snapshot.version,
+          square_synced_at: syncedAt,
+          square_deleted_at: syncedAt,
+          updated_at: syncedAt,
+        }
+      : {
+          ...(snapshot.mgmtNo ? { mgmt_no: snapshot.mgmtNo } : {}),
+          ...(snapshot.title ? { title: snapshot.title } : {}),
+          ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
+          description: snapshot.description ?? null,
+          ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
+          square_version: snapshot.version,
+          square_synced_at: syncedAt,
+          square_deleted_at: null,
+          updated_at: syncedAt,
+        });
+
+    return c.json({
+      item: {
+        squareObjectId: snapshot.squareObjectId,
+        isDeleted: snapshot.isDeleted,
+        ...(snapshot.mgmtNo ? { mgmtNo: snapshot.mgmtNo } : {}),
+        ...(snapshot.title ? { title: snapshot.title } : {}),
+        ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
+        description: snapshot.description ?? null,
+      },
+      syncedAt,
+    });
+  } catch (error) {
+    if (error instanceof SquareApiError) {
+      console.error("Square item fetch failed", error.status, error.errors);
+      return c.json({ error: "square_api_error", message: "Squareの最新情報を取得できませんでした" }, 502);
+    }
+    console.error("Square item sync failed", error);
+    return c.json({ error: "sync_failed", message: "Squareの最新情報を保存できませんでした" }, 500);
   }
 });
 

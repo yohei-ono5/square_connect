@@ -63,6 +63,7 @@ export function ItemDetailPage() {
     saveItem,
     saveSquareRegistration,
     syncPhotosToSquare,
+    refreshItemFromSquare,
     addPhoto,
     removePhoto,
     isMgmtNoTaken,
@@ -78,11 +79,13 @@ export function ItemDetailPage() {
   const [measuring, setMeasuring] = useState(false);
   const [detected, setDetected] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<"draft" | "square" | null>(null);
+  const [refreshingSquare, setRefreshingSquare] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const saving = savingAction !== null;
 
   useEffect(() => {
     loadSquareCategories();
@@ -118,9 +121,37 @@ export function ItemDetailPage() {
     setTimeout(() => setToast(null), 2000);
   }
 
-  async function handleSave() {
-    if (!id || saving || mgmtNoConflict) return;
-    setSaving(true);
+  async function handleRefreshFromSquare() {
+    if (!id || saving || refreshingSquare || !currentItem.squareObjectId) return;
+    setRefreshingSquare(true);
+    setSaveError(null);
+    try {
+      await refreshItemFromSquare(id);
+      showToast("Squareの最新情報を取得しました");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Squareの最新情報を取得できませんでした");
+    } finally {
+      setRefreshingSquare(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (!id || saving || refreshingSquare || mgmtNoConflict) return;
+    setSavingAction("draft");
+    setSaveError(null);
+    try {
+      await saveItem(id);
+      showToast("下書きを保存しました。Squareには反映されていません");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "下書きの保存に失敗しました");
+    } finally {
+      setSavingAction(null);
+    }
+  }
+
+  async function handleSaveToSquare() {
+    if (!id || saving || refreshingSquare || mgmtNoConflict) return;
+    setSavingAction("square");
     setSaveError(null);
     try {
       await saveItem(id);
@@ -139,44 +170,35 @@ export function ItemDetailPage() {
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
         if (!response.ok) throw new Error(result?.message ?? "Squareの商品更新に失敗しました");
         const syncedPhotos = await syncPhotosToSquare(id);
-        showToast(syncedPhotos > 0 ? `保存し、写真${syncedPhotos}枚をSquareへ反映しました` : "保存してSquareにも反映しました");
+        showToast(syncedPhotos > 0 ? `写真${syncedPhotos}枚を含めてSquareを更新しました` : "Squareを更新しました");
       } else {
-        showToast("下書きを保存しました");
+        const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mgmtNo: currentItem.mgmtNo,
+            title: currentItem.title,
+            price: currentItem.price,
+            hasPhotos: currentItem.photos.length > 0,
+          }),
+        });
+        const result = (await response.json().catch(() => null)) as
+          | { squareObjectId?: string; squareVariationId?: string; message?: string; imageSyncWarning?: string }
+          | null;
+        if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
+          throw new Error(result?.message ?? "Squareへの登録に失敗しました");
+        }
+        await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
+        showToast(
+          result.imageSyncWarning ?? (currentItem.photos.length > 0
+            ? "商品と写真をSquareへ登録し、Supabaseへ保存しました"
+            : "商品をSquareへ登録し、Supabaseへ保存しました"),
+        );
       }
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "保存に失敗しました");
+      setSaveError(error instanceof Error ? error.message : "Squareへの反映に失敗しました");
     } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleRegisterToSquare() {
-    if (!id || saving || currentItem.squareObjectId || mgmtNoConflict) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await saveItem(id);
-      const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mgmtNo: currentItem.mgmtNo,
-          title: currentItem.title,
-          price: currentItem.price,
-        }),
-      });
-      const result = (await response.json().catch(() => null)) as
-        | { squareObjectId?: string; squareVariationId?: string; message?: string; imageSyncWarning?: string }
-        | null;
-      if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
-        throw new Error(result?.message ?? "Squareへの登録に失敗しました");
-      }
-      await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
-      showToast(result.imageSyncWarning ?? "商品と写真をSquareへ登録し、Supabaseへ保存しました");
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
-    } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   }
 
@@ -280,7 +302,20 @@ export function ItemDetailPage() {
               {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
             </p>
           </div>
-          <StatusBadge item={item} />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+            <StatusBadge item={item} />
+            {item.squareObjectId && (
+              <button
+                type="button"
+                className="btn"
+                style={{ minHeight: 30, padding: "4px 8px", fontSize: 12 }}
+                onClick={handleRefreshFromSquare}
+                disabled={saving || refreshingSquare}
+              >
+                {refreshingSquare ? "取得中…" : "Squareの最新情報を取得"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -581,10 +616,15 @@ export function ItemDetailPage() {
             <input
               id="price"
               className="input"
-              type="number"
-              min={0}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={item.price}
-              onChange={(e) => updateItem(id!, { price: Number(e.target.value) || 0 })}
+              onChange={(e) => {
+                if (/^\d*$/.test(e.target.value)) {
+                  updateItem(id!, { price: Number(e.target.value) || 0 });
+                }
+              }}
             />
           </div>
           <div className="field">
@@ -609,7 +649,7 @@ export function ItemDetailPage() {
       {tab === "desc" && (
         <div className="content">
           <div className="description-preview">{buildDescription(item)}</div>
-          <p className="hint">Square登録済みの商品は、保存するとSquareの商品名・SKU・価格・説明文にも反映されます。</p>
+          <p className="hint">「下書き保存」はSupabaseだけに保存します。「Squareを更新」を押すと、商品名・SKU・価格・説明文をSquareにも反映します。</p>
         </div>
       )}
 
@@ -618,19 +658,19 @@ export function ItemDetailPage() {
           type="button"
           className="btn btn-primary"
           style={{ flex: 1 }}
-          onClick={handleSave}
-          disabled={saving || mgmtNoConflict}
+          onClick={handleSaveDraft}
+          disabled={saving || refreshingSquare || mgmtNoConflict}
         >
-          {saving ? "保存中…" : "保存"}
+          {savingAction === "draft" ? "保存中…" : "下書き保存"}
         </button>
         <button
           type="button"
           className="btn"
           style={{ flex: 1 }}
-          onClick={handleRegisterToSquare}
-          disabled={saving || Boolean(item.squareObjectId) || mgmtNoConflict}
+          onClick={handleSaveToSquare}
+          disabled={saving || refreshingSquare || mgmtNoConflict}
         >
-          {item.squareObjectId ? "Square登録済み" : "Squareに登録"}
+          {savingAction === "square" ? "反映中…" : item.squareObjectId ? "Squareを更新" : "Squareに登録"}
         </button>
       </div>
       {saveError && <p className="form-error" style={{ margin: "0 16px 12px" }}>{saveError}</p>}
