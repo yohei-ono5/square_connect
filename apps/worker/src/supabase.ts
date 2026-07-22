@@ -8,10 +8,63 @@ export type ItemPhotoRecord = {
   item_id: string;
   role: "main" | "sub";
   storage_path: string;
+  square_image_id: string | null;
   width: number | null;
   height: number | null;
   sort: number;
 };
+
+export async function getItemSquareObjectId(
+  config: SupabaseConfig,
+  itemId: string,
+): Promise<string | null> {
+  const response = await supabaseRequest(
+    config,
+    `items?item_id=eq.${encodeURIComponent(itemId)}&select=square_object_id&limit=1`,
+  );
+  const rows = (await response.json()) as { square_object_id: string | null }[];
+  return rows[0]?.square_object_id ?? null;
+}
+
+export async function listItemPhotos(
+  config: SupabaseConfig,
+  itemId: string,
+): Promise<ItemPhotoRecord[]> {
+  const response = await supabaseRequest(
+    config,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&select=*&order=created_at.desc`,
+  );
+  return (await response.json()) as ItemPhotoRecord[];
+}
+
+export async function getItemPhoto(
+  config: SupabaseConfig,
+  itemId: string,
+  itemPhotoId: string,
+): Promise<ItemPhotoRecord | null> {
+  const response = await supabaseRequest(
+    config,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&item_photo_id=eq.${encodeURIComponent(itemPhotoId)}&select=*&limit=1`,
+  );
+  const rows = (await response.json()) as ItemPhotoRecord[];
+  return rows[0] ?? null;
+}
+
+export async function saveItemPhotoSquareImageId(
+  config: SupabaseConfig,
+  itemPhotoId: string,
+  squareImageId: string,
+): Promise<void> {
+  await supabaseRequest(
+    config,
+    `item_photos?item_photo_id=eq.${encodeURIComponent(itemPhotoId)}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ square_image_id: squareImageId }),
+    },
+  );
+}
 
 function assertConfig(config: SupabaseConfig) {
   if (!config.url || !config.serviceRoleKey) {

@@ -8,6 +8,7 @@ export type StoredPhoto = {
   role: "main" | "sub";
   storagePath: string;
   previewUrl: string;
+  squareImageId: string | null;
 };
 
 type PhotoRow = {
@@ -15,6 +16,7 @@ type PhotoRow = {
   item_id: string;
   role: "main" | "sub";
   storage_path: string;
+  square_image_id: string | null;
 };
 
 export const MAX_SQUARE_IMAGE_BYTES = 15_000_000;
@@ -99,6 +101,7 @@ function photoRowToStoredPhoto(row: PhotoRow): StoredPhoto {
     role: row.role,
     storagePath: row.storage_path,
     previewUrl: `${WORKER_BASE_URL}/media/${row.storage_path}`,
+    squareImageId: row.square_image_id,
   };
 }
 
@@ -147,14 +150,18 @@ export async function listItems(): Promise<Item[]> {
 export async function listItemPhotos(): Promise<StoredPhoto[]> {
   const result = await getSupabase()
     .from("item_photos")
-    .select("item_photo_id,item_id,role,storage_path")
+    .select("item_photo_id,item_id,role,storage_path,square_image_id")
     .order("sort", { ascending: true })
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false });
   if (result.error) throw repositoryError("写真一覧の取得に失敗しました", result.error);
   return (result.data as unknown as PhotoRow[]).map(photoRowToStoredPhoto);
 }
 
-export async function uploadItemPhoto(itemId: string, role: StoredPhoto["role"], file: File): Promise<StoredPhoto> {
+export async function uploadItemPhoto(
+  itemId: string,
+  role: StoredPhoto["role"],
+  file: File,
+): Promise<{ photo: StoredPhoto; squareSyncWarning: string | null }> {
   const validationMessage = validateSquareImage(file);
   if (validationMessage) throw new Error(validationMessage);
 
@@ -165,9 +172,23 @@ export async function uploadItemPhoto(itemId: string, role: StoredPhoto["role"],
     method: "POST",
     body,
   });
-  const result = (await response.json().catch(() => null)) as { photo?: StoredPhoto; message?: string } | null;
+  const result = (await response.json().catch(() => null)) as {
+    photo?: StoredPhoto;
+    message?: string;
+    squareSyncWarning?: string;
+  } | null;
   if (!response.ok || !result?.photo) throw new Error(result?.message ?? "写真の保存に失敗しました");
-  return result.photo;
+  return { photo: result.photo, squareSyncWarning: result.squareSyncWarning ?? null };
+}
+
+export async function syncItemPhotosToSquare(itemId: string): Promise<number> {
+  const response = await fetch(
+    `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos/sync-to-square`,
+    { method: "POST" },
+  );
+  const result = (await response.json().catch(() => null)) as { synced?: number; message?: string } | null;
+  if (!response.ok) throw new Error(result?.message ?? "写真をSquareへ反映できませんでした");
+  return result?.synced ?? 0;
 }
 
 export async function deleteItemPhoto(itemId: string, itemPhotoId: string): Promise<void> {
@@ -249,4 +270,15 @@ export async function deleteItem(itemId: string): Promise<void> {
     .update({ deleted_at: now, updated_at: now })
     .eq("item_id", itemId);
   if (result.error) throw repositoryError("商品の削除に失敗しました", result.error);
+}
+
+// Square登録に失敗した新規商品だけを完全破棄する。Square IDが付いた商品は誤って
+// 消さないよう条件に含め、通常の商品削除（論理削除）とは明確に分ける。
+export async function discardUnregisteredItem(itemId: string): Promise<void> {
+  const result = await getSupabase()
+    .from("items")
+    .delete()
+    .eq("item_id", itemId)
+    .is("square_object_id", null);
+  if (result.error) throw repositoryError("一時商品の破棄に失敗しました", result.error);
 }

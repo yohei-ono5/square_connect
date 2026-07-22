@@ -5,7 +5,7 @@ import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 
 export function QuickRegisterPage() {
-  const { addItem, saveSquareRegistration, isMgmtNoTaken } = useItems();
+  const { addItem, discardItem, saveSquareRegistration, isMgmtNoTaken } = useItems();
   const navigate = useNavigate();
   const [mgmtNo, setMgmtNo] = useState("");
   const [title, setTitle] = useState("");
@@ -66,6 +66,8 @@ export function QuickRegisterPage() {
       return;
     }
 
+    let temporaryItemId: string | null = null;
+    let squareRegistered = false;
     try {
       // 先にSupabaseへ商品を作り、そのUUIDをSquare登録の冪等性キーに利用する。
       const item = await addItem({
@@ -74,6 +76,7 @@ export function QuickRegisterPage() {
         price: Number(price),
         photoFile: photoFile ?? undefined,
       });
+      temporaryItemId = item.id;
       const response = await fetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -84,18 +87,31 @@ export function QuickRegisterPage() {
         }),
       });
       const result = (await response.json().catch(() => null)) as
-        | { squareObjectId?: string; squareVariationId?: string; message?: string }
+        | { squareObjectId?: string; squareVariationId?: string; message?: string; imageSyncWarning?: string }
         | null;
 
       if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
         throw new Error(result?.message ?? "Squareへの登録に失敗しました");
       }
 
+      squareRegistered = true;
       await saveSquareRegistration(item.id, result.squareObjectId, result.squareVariationId);
-      navigate(`/items/${item.id}`);
+      navigate(`/items/${item.id}`, {
+        state: result.imageSyncWarning ? { notice: result.imageSyncWarning } : undefined,
+      });
     } catch (error) {
-      // 商品自体はローカルに作成済みなので、失敗しても商品一覧からは見える。再登録は詳細編集画面の「Squareに登録」から。
-      setErrorMessage(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
+      let message = error instanceof Error ? error.message : "Squareへの登録に失敗しました";
+      if (temporaryItemId && !squareRegistered) {
+        try {
+          await discardItem(temporaryItemId);
+        } catch (cleanupError) {
+          console.error("Failed registration cleanup failed", cleanupError);
+          message += "。一時データの削除にも失敗したため、商品一覧を確認してください";
+        }
+      } else if (squareRegistered) {
+        message += "。Squareへの商品登録は成功していますが、Supabaseへの保存に失敗しました";
+      }
+      setErrorMessage(message);
       setSubmitting(false);
     }
   }
@@ -126,7 +142,7 @@ export function QuickRegisterPage() {
           ← 商品一覧に戻る
         </Link>
         <h1>クイック登録</h1>
-        <p className="subtitle">商品番号・商品名・金額でSquareへ非公開登録します。写真は任意で追加できます。</p>
+        <p className="subtitle">商品番号・商品名・金額でSquareへ登録します。写真は任意で追加できます。</p>
       </div>
 
       <form className="content" onSubmit={(e) => e.preventDefault()}>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@square-connect/shared";
 import {
   calculateMeasurements,
@@ -53,6 +53,8 @@ function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
 
 export function ItemDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const navigationNotice = (location.state as { notice?: string } | null)?.notice;
   const {
     getItem,
     itemsLoading,
@@ -60,6 +62,7 @@ export function ItemDetailPage() {
     updateItem,
     saveItem,
     saveSquareRegistration,
+    syncPhotosToSquare,
     addPhoto,
     removePhoto,
     isMgmtNoTaken,
@@ -135,7 +138,8 @@ export function ItemDetailPage() {
         });
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
         if (!response.ok) throw new Error(result?.message ?? "Squareの商品更新に失敗しました");
-        showToast("保存してSquareにも反映しました");
+        const syncedPhotos = await syncPhotosToSquare(id);
+        showToast(syncedPhotos > 0 ? `保存し、写真${syncedPhotos}枚をSquareへ反映しました` : "保存してSquareにも反映しました");
       } else {
         showToast("下書きを保存しました");
       }
@@ -162,13 +166,13 @@ export function ItemDetailPage() {
         }),
       });
       const result = (await response.json().catch(() => null)) as
-        | { squareObjectId?: string; squareVariationId?: string; message?: string }
+        | { squareObjectId?: string; squareVariationId?: string; message?: string; imageSyncWarning?: string }
         | null;
       if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
         throw new Error(result?.message ?? "Squareへの登録に失敗しました");
       }
       await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
-      showToast("Squareへ登録し、Supabaseへ保存しました");
+      showToast(result.imageSyncWarning ?? "商品と写真をSquareへ登録し、Supabaseへ保存しました");
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Squareへの登録に失敗しました");
     } finally {
@@ -195,7 +199,8 @@ export function ItemDetailPage() {
     setPhotoBusy(true);
     setPhotoError(null);
     try {
-      await addPhoto(id, role, file);
+      const squareSyncWarning = await addPhoto(id, role, file);
+      if (squareSyncWarning) setPhotoError(squareSyncWarning);
     } catch (error) {
       setPhotoError(error instanceof Error ? error.message : "写真の保存に失敗しました");
     } finally {
@@ -629,6 +634,7 @@ export function ItemDetailPage() {
         </button>
       </div>
       {saveError && <p className="form-error" style={{ margin: "0 16px 12px" }}>{saveError}</p>}
+      {navigationNotice && <p className="form-error" style={{ margin: "0 16px 12px" }}>{navigationNotice}</p>}
       {toast && <p className="toast">{toast}</p>}
     </div>
   );

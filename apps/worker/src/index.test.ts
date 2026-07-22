@@ -67,6 +67,7 @@ describe("item photo storage", () => {
           },
         ], 201),
       )
+      .mockResolvedValueOnce(squareResponse([]))
       .mockResolvedValueOnce(squareResponse([]));
     const body = new FormData();
     body.append("role", "main");
@@ -86,7 +87,8 @@ describe("item photo storage", () => {
     expect(r2Put).toHaveBeenCalledOnce();
     expect(String(r2Put.mock.calls[0][0])).toMatch(new RegExp(`^items/${itemId}/[0-9a-f-]+\\.png$`));
     expect(fetchSpy.mock.calls[0][0]).toBe("https://project.supabase.co/rest/v1/item_photos");
-    expect(fetchSpy.mock.calls[1][0]).toContain(`item_photos?item_id=eq.${itemId}&role=eq.main`);
+    expect(fetchSpy.mock.calls[1][0]).toContain(`items?item_id=eq.${itemId}&select=square_object_id`);
+    expect(fetchSpy.mock.calls[2][0]).toContain(`item_photos?item_id=eq.${itemId}&role=eq.main`);
   });
 
   it("rejects WebP before writing to R2", async () => {
@@ -112,6 +114,37 @@ describe("item photo storage", () => {
     expect(await response.json()).toMatchObject({ error: "image_too_large" });
     expect(r2Put).not.toHaveBeenCalled();
   });
+
+  it("deletes the Square catalog image before removing the R2 photo", async () => {
+    const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
+    const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
+    const storagePath = `items/${itemId}/${itemPhotoId}.jpg`;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{
+        item_photo_id: itemPhotoId,
+        item_id: itemId,
+        role: "main",
+        storage_path: storagePath,
+        square_image_id: "square-image-1",
+      }]))
+      .mockResolvedValueOnce(squareResponse({ deleted_object_ids: ["square-image-1"] }))
+      .mockResolvedValueOnce(squareResponse([]));
+
+    const response = await app.request(
+      `/api/items/${itemId}/photos/${itemPhotoId}`,
+      { method: "DELETE" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/catalog/object/square-image-1",
+    );
+    expect(fetchSpy.mock.calls[1][1]?.method).toBe("DELETE");
+    expect(r2Delete).toHaveBeenCalledWith(storagePath);
+    expect(fetchSpy.mock.calls[2][0]).toContain(`item_photos?item_id=eq.${itemId}&item_photo_id=eq.${itemPhotoId}`);
+  });
 });
 
 describe("POST /api/items/:id/register-to-square", () => {
@@ -133,7 +166,9 @@ describe("POST /api/items/:id/register-to-square", () => {
   });
 
   it("returns 409 when the SKU already exists", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(squareResponse({ objects: [{ id: "variation-1" }] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(squareResponse({
+      objects: [{ id: "variation-1", item_variation_data: { item_id: "square-item-1" } }],
+    }));
 
     const response = await app.request(
       "/api/items/item-1/register-to-square",
@@ -161,7 +196,8 @@ describe("POST /api/items/:id/register-to-square", () => {
             { client_object_id: "#variation", object_id: "square-variation-1" },
           ],
         }),
-      );
+      )
+      .mockResolvedValueOnce(squareResponse([]));
 
     const response = await app.request(
       "/api/items/7d61/register-to-square",
@@ -178,7 +214,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       squareObjectId: "square-item-1",
       squareVariationId: "square-variation-1",
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
 
     const [searchUrl, searchInit] = fetchSpy.mock.calls[0];
     expect(searchUrl).toBe("https://connect.squareupsandbox.com/v2/catalog/search");
@@ -205,6 +241,134 @@ describe("POST /api/items/:id/register-to-square", () => {
           ],
         },
       },
+    });
+  });
+
+  it("recovers created Square IDs when the upsert response is lost", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse({ objects: [] }))
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(squareResponse({
+        objects: [{
+          type: "ITEM_VARIATION",
+          id: "square-variation-recovered",
+          item_variation_data: { item_id: "square-item-recovered", sku: "T0088" },
+        }],
+      }))
+      .mockResolvedValueOnce(squareResponse([]));
+
+    const response = await app.request(
+      "/api/items/item-recovered/register-to-square",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mgmtNo: "T0088", title: "復旧商品", price: 3000 }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      squareObjectId: "square-item-recovered",
+      squareVariationId: "square-variation-recovered",
+    });
+  });
+
+  it("uploads the R2 main photo and attaches it to the created Square item", async () => {
+    const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
+    const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
+    const storagePath = `items/${itemId}/${itemPhotoId}.png`;
+    r2Get.mockResolvedValueOnce({
+      blob: () => Promise.resolve(new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: "image/png" })),
+      httpMetadata: { contentType: "image/png" },
+    });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse({ objects: [] }))
+      .mockResolvedValueOnce(squareResponse({
+        catalog_object: { id: "square-item-1" },
+        id_mappings: [
+          { client_object_id: "#item", object_id: "square-item-1" },
+          { client_object_id: "#variation", object_id: "square-variation-1" },
+        ],
+      }))
+      .mockResolvedValueOnce(squareResponse([{
+        item_photo_id: itemPhotoId,
+        item_id: itemId,
+        role: "main",
+        storage_path: storagePath,
+        square_image_id: null,
+        width: null,
+        height: null,
+        sort: 0,
+      }]))
+      .mockResolvedValueOnce(squareResponse({ image: { id: "square-image-1" } }, 201))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const response = await app.request(
+      `/api/items/${itemId}/register-to-square`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mgmtNo: "T0090", title: "画像付きTシャツ", price: 3000 }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      squareObjectId: "square-item-1",
+      squareVariationId: "square-variation-1",
+    });
+    expect(r2Get).toHaveBeenCalledWith(storagePath);
+    expect(fetchSpy.mock.calls[3][0]).toBe("https://connect.squareupsandbox.com/v2/catalog/images");
+    const imageForm = fetchSpy.mock.calls[3][1]?.body as FormData;
+    expect(imageForm).toBeInstanceOf(FormData);
+    expect(JSON.parse(String(imageForm.get("request")))).toMatchObject({
+      object_id: "square-item-1",
+      is_primary: true,
+      idempotency_key: `square-connect-image-${itemPhotoId}`,
+    });
+    expect(fetchSpy.mock.calls[4][0]).toContain(`item_photos?item_photo_id=eq.${itemPhotoId}`);
+    expect(JSON.parse(String(fetchSpy.mock.calls[4][1]?.body))).toEqual({ square_image_id: "square-image-1" });
+  });
+
+  it("returns the created item IDs with a warning when only image upload fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    r2Get.mockResolvedValueOnce({
+      blob: () => Promise.resolve(new Blob(["image"], { type: "image/jpeg" })),
+      httpMetadata: { contentType: "image/jpeg" },
+    });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse({ objects: [] }))
+      .mockResolvedValueOnce(squareResponse({
+        catalog_object: { id: "square-item-2" },
+        id_mappings: [{ client_object_id: "#variation", object_id: "square-variation-2" }],
+      }))
+      .mockResolvedValueOnce(squareResponse([{
+        item_photo_id: "a8ae5959-69c9-4d25-b369-d27bfeb52bd8",
+        item_id: "item-2",
+        role: "main",
+        storage_path: "items/item-2/a8ae5959-69c9-4d25-b369-d27bfeb52bd8.jpg",
+        square_image_id: null,
+      }]))
+      .mockResolvedValueOnce(squareResponse({ errors: [{ detail: "image rejected" }] }, 400));
+
+    const response = await app.request(
+      "/api/items/item-2/register-to-square",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mgmtNo: "T0091", title: "画像失敗", price: 3000 }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      squareObjectId: "square-item-2",
+      squareVariationId: "square-variation-2",
+      imageSyncWarning: expect.any(String),
     });
   });
 

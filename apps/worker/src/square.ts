@@ -5,7 +5,7 @@ import {
   type UpdateSquareItemInput,
 } from "@square-connect/shared";
 
-const SQUARE_API_VERSION = "2026-05-20";
+const SQUARE_API_VERSION = "2026-07-15";
 
 export type SquareConfig = {
   accessToken: string;
@@ -102,7 +102,7 @@ async function squareRequest<T>(
   path: string,
   body: unknown,
   fetcher: typeof fetch,
-  method: "POST" | "GET" = "POST",
+  method: "POST" | "GET" | "DELETE" = "POST",
 ): Promise<T> {
   let response: Response;
   try {
@@ -133,8 +133,106 @@ async function squareRequest<T>(
   return payload;
 }
 
+type CreateCatalogImageResponse = {
+  image?: { id?: string };
+  errors?: SquareError[];
+};
+
+export async function uploadCatalogImage(
+  config: SquareConfig,
+  input: {
+    squareObjectId: string;
+    itemPhotoId: string;
+    fileName: string;
+    file: Blob;
+    isPrimary: boolean;
+  },
+  fetcher: typeof fetch = fetch,
+): Promise<string> {
+  if (!config.accessToken) throw new Error("SQUARE_ACCESS_TOKEN is not configured");
+
+  const form = new FormData();
+  form.append("file", input.file, input.fileName);
+  form.append("request", JSON.stringify({
+    idempotency_key: `square-connect-image-${input.itemPhotoId}`,
+    object_id: input.squareObjectId,
+    is_primary: input.isPrimary,
+    image: {
+      type: "IMAGE",
+      id: `#image-${input.itemPhotoId}`,
+      image_data: { name: input.fileName },
+    },
+  }));
+
+  let response: Response;
+  try {
+    response = await fetcher(`${getBaseUrl(config.environment)}/v2/catalog/images`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.accessToken}`,
+        Accept: "application/json",
+        "Square-Version": SQUARE_API_VERSION,
+      },
+      body: form,
+    });
+  } catch {
+    throw new SquareApiError(0, [{ detail: "Could not reach Square image API" }]);
+  }
+
+  let payload: CreateCatalogImageResponse;
+  try {
+    payload = (await response.json()) as CreateCatalogImageResponse;
+  } catch {
+    throw new SquareApiError(response.status, [{ detail: "Square image API returned an invalid response" }]);
+  }
+  if (!response.ok || payload.errors?.length) {
+    throw new SquareApiError(response.status, payload.errors ?? []);
+  }
+  if (!payload.image?.id) {
+    throw new SquareApiError(502, [{ detail: "Square image API response did not include an image ID" }]);
+  }
+  return payload.image.id;
+}
+
+export async function deleteCatalogImage(
+  config: SquareConfig,
+  squareImageId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  await squareRequest<{ deleted_object_ids?: string[] }>(
+    config,
+    `/v2/catalog/object/${encodeURIComponent(squareImageId)}`,
+    undefined,
+    fetcher,
+    "DELETE",
+  );
+}
+
 function mappedId(response: UpsertCatalogResponse, clientId: string): string | undefined {
   return response.id_mappings?.find((mapping) => mapping.client_object_id === clientId)?.object_id;
+}
+
+async function findSquareItemBySku(
+  config: SquareConfig,
+  sku: string,
+  fetcher: typeof fetch,
+): Promise<RegisterToSquareResult | null> {
+  const search = await squareRequest<SearchCatalogResponse>(
+    config,
+    "/v2/catalog/search",
+    {
+      object_types: ["ITEM_VARIATION"],
+      include_deleted_objects: false,
+      include_related_objects: false,
+      query: { exact_query: { attribute_name: "sku", attribute_value: sku } },
+      limit: 1,
+    },
+    fetcher,
+  );
+  const variation = search.objects?.[0] as CatalogVariationObject | undefined;
+  const squareObjectId = variation?.item_variation_data?.item_id;
+  if (!variation?.id || !squareObjectId) return null;
+  return { squareObjectId, squareVariationId: variation.id };
 }
 
 export async function registerItemInSquare(
@@ -145,62 +243,58 @@ export async function registerItemInSquare(
 ): Promise<RegisterToSquareResult> {
   if (!config.accessToken) throw new Error("SQUARE_ACCESS_TOKEN is not configured");
 
-  const search = await squareRequest<SearchCatalogResponse>(
-    config,
-    "/v2/catalog/search",
-    {
-      object_types: ["ITEM_VARIATION"],
-      include_deleted_objects: false,
-      include_related_objects: false,
-      query: {
-        exact_query: {
-          attribute_name: "sku",
-          attribute_value: input.mgmtNo,
-        },
-      },
-      limit: 1,
-    },
-    fetcher,
-  );
+  const existing = await findSquareItemBySku(config, input.mgmtNo, fetcher);
+  if (existing) throw new DuplicateSkuError(input.mgmtNo);
 
-  if (search.objects?.length) throw new DuplicateSkuError(input.mgmtNo);
-
-  const upsert = await squareRequest<UpsertCatalogResponse>(
-    config,
-    "/v2/catalog/object",
-    {
-      idempotency_key: idempotencyKey,
-      object: {
-        type: "ITEM",
-        id: "#item",
-        // Sandbox Dashboardで目視確認しやすいよう、まずは全ロケーション表示で作成する。
-        // 本番運用の「非公開作成→確認→公開」は、公開フロー確定時に切り替える。
-        present_at_all_locations: true,
-        item_data: {
-          name: buildTitle(input),
-          product_type: "REGULAR",
-          variations: [
-            {
-              type: "ITEM_VARIATION",
-              id: "#variation",
-              present_at_all_locations: true,
-              item_variation_data: {
-                item_id: "#item",
-                name: "通常",
-                sku: input.mgmtNo,
-                pricing_type: "FIXED_PRICING",
-                price_money: {
-                  amount: input.price,
-                  currency: "JPY",
+  let upsert: UpsertCatalogResponse;
+  try {
+    upsert = await squareRequest<UpsertCatalogResponse>(
+      config,
+      "/v2/catalog/object",
+      {
+        idempotency_key: idempotencyKey,
+        object: {
+          type: "ITEM",
+          id: "#item",
+          // Sandbox Dashboardで目視確認しやすいよう、まずは全ロケーション表示で作成する。
+          // 本番運用の「非公開作成→確認→公開」は、公開フロー確定時に切り替える。
+          present_at_all_locations: true,
+          item_data: {
+            name: buildTitle(input),
+            product_type: "REGULAR",
+            variations: [
+              {
+                type: "ITEM_VARIATION",
+                id: "#variation",
+                present_at_all_locations: true,
+                item_variation_data: {
+                  item_id: "#item",
+                  name: "通常",
+                  sku: input.mgmtNo,
+                  pricing_type: "FIXED_PRICING",
+                  price_money: {
+                    amount: input.price,
+                    currency: "JPY",
+                  },
                 },
               },
-            },
-          ],
+            ],
+          },
         },
       },
-    },
-    fetcher,
-  );
+      fetcher,
+    );
+  } catch (error) {
+    // Squareが商品を作成した直後に応答だけ失われると、ブラウザには失敗と見えても
+    // Squareには商品が残る。SKUを再照会して作成済みなら成功としてIDを返す。
+    try {
+      const recovered = await findSquareItemBySku(config, input.mgmtNo, fetcher);
+      if (recovered) return recovered;
+    } catch (recoveryError) {
+      console.error("Square registration recovery search failed", recoveryError);
+    }
+    throw error;
+  }
 
   const squareObjectId = upsert.catalog_object?.id ?? mappedId(upsert, "#item");
   const squareVariationId = mappedId(upsert, "#variation");

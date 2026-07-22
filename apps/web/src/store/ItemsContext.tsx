@@ -6,10 +6,12 @@ import {
   createItem as createStoredItem,
   deleteItemPhoto as deleteStoredPhoto,
   deleteItem as deleteStoredItem,
+  discardUnregisteredItem,
   listItemPhotos,
   listItems,
   saveItem as persistItem,
   saveSquareRegistration as persistSquareRegistration,
+  syncItemPhotosToSquare as syncStoredPhotosToSquare,
   type StoredPhoto,
   uploadItemPhoto,
 } from "../lib/itemRepository";
@@ -37,10 +39,12 @@ type ItemsContextValue = {
   getItem: (id: string) => MockItem | undefined;
   addItem: (input: QuickRegisterInput) => Promise<MockItem>;
   deleteItem: (id: string) => Promise<void>;
+  discardItem: (id: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   saveItem: (id: string) => Promise<void>;
   saveSquareRegistration: (id: string, squareObjectId: string, squareVariationId: string) => Promise<void>;
-  addPhoto: (id: string, role: PhotoRole, file: File) => Promise<void>;
+  syncPhotosToSquare: (id: string) => Promise<number>;
+  addPhoto: (id: string, role: PhotoRole, file: File) => Promise<string | null>;
   removePhoto: (id: string, photoId: string) => Promise<void>;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
   squareCategories: SquareCategory[] | null;
@@ -129,9 +133,17 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         };
         setItems((prev) => [item, ...prev]);
         if (input.photoFile) {
-          const photo = await uploadItemPhoto(item.id, "main", input.photoFile);
-          item = { ...item, photos: [photo] };
-          setItems((prev) => prev.map((candidate) => candidate.id === item.id ? item : candidate));
+          try {
+            const { photo } = await uploadItemPhoto(item.id, "main", input.photoFile);
+            item = { ...item, photos: [photo] };
+            setItems((prev) => prev.map((candidate) => candidate.id === item.id ? item : candidate));
+          } catch (error) {
+            await discardUnregisteredItem(item.id).catch((cleanupError) => {
+              console.error("Temporary item cleanup failed", cleanupError);
+            });
+            setItems((prev) => prev.filter((candidate) => candidate.id !== item.id));
+            throw error;
+          }
         }
         return item;
       },
@@ -142,6 +154,19 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         }
         await deleteStoredItem(id);
         setItems((prev) => prev.filter((it) => it.id !== id));
+      },
+      discardItem: async (id) => {
+        const item = items.find((candidate) => candidate.id === id);
+        if (item) {
+          const photoCleanup = await Promise.allSettled(
+            item.photos.map((photo) => deleteStoredPhoto(id, photo.id)),
+          );
+          for (const result of photoCleanup) {
+            if (result.status === "rejected") console.error("Temporary photo cleanup failed", result.reason);
+          }
+        }
+        await discardUnregisteredItem(id);
+        setItems((prev) => prev.filter((candidate) => candidate.id !== id));
       },
       updateItem: (id, patch) => {
         setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -159,8 +184,9 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           ),
         );
       },
+      syncPhotosToSquare: (id) => syncStoredPhotosToSquare(id),
       addPhoto: async (id, role, file) => {
-        const photo = await uploadItemPhoto(id, role, file);
+        const { photo, squareSyncWarning } = await uploadItemPhoto(id, role, file);
         setItems((prev) =>
           prev.map((it) => {
             if (it.id !== id) return it;
@@ -169,6 +195,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
             return { ...it, photos: [...kept, photo] };
           }),
         );
+        return squareSyncWarning;
       },
       removePhoto: async (id, photoId) => {
         await deleteStoredPhoto(id, photoId);

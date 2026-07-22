@@ -2,20 +2,26 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { RegisterToSquareInputSchema, UpdateSquareItemInputSchema } from "@square-connect/shared";
 import {
+  deleteCatalogImage,
   DuplicateSkuError,
   listSquareCategories,
   registerItemInSquare,
   SquareApiError,
   searchChangedSquareItems,
   updateItemInSquare,
+  uploadCatalogImage,
 } from "./square";
 import {
   createItemPhoto,
   deleteItemPhoto,
   deleteItemPhotosByRole,
+  getItemPhoto,
+  getItemSquareObjectId,
   getLastCatalogUpdatedAt,
+  listItemPhotos,
   recordWebhookEvent,
   saveCatalogUpdatedAt,
+  saveItemPhotoSquareImageId,
   updateItemBySquareId,
 } from "./supabase";
 import { verifySquareWebhookSignature } from "./webhook";
@@ -77,6 +83,77 @@ function photoUrl(requestUrl: string, storagePath: string): string {
   return new URL(`/media/${storagePath}`, requestUrl).toString();
 }
 
+function squareConfig(env: Bindings) {
+  return { accessToken: env.SQUARE_ACCESS_TOKEN, environment: env.SQUARE_ENV };
+}
+
+function supabaseConfig(env: Bindings) {
+  return { url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY };
+}
+
+async function syncPhotoToSquare(
+  env: Bindings,
+  photo: Awaited<ReturnType<typeof listItemPhotos>>[number],
+  squareObjectId: string,
+): Promise<string> {
+  if (photo.square_image_id) return photo.square_image_id;
+  const object = await env.ITEM_IMAGES.get(photo.storage_path);
+  if (!object) throw new Error(`R2 object not found: ${photo.storage_path}`);
+
+  const fileName = photo.storage_path.split("/").at(-1) ?? `${photo.item_photo_id}.jpg`;
+  const source = await object.blob();
+  const contentType = object.httpMetadata?.contentType ?? source.type;
+  const file = source.type || !contentType
+    ? source
+    : new Blob([await source.arrayBuffer()], { type: contentType });
+  const squareImageId = await uploadCatalogImage(squareConfig(env), {
+    squareObjectId,
+    itemPhotoId: photo.item_photo_id,
+    fileName,
+    file,
+    isPrimary: photo.role === "main",
+  });
+  await saveItemPhotoSquareImageId(supabaseConfig(env), photo.item_photo_id, squareImageId);
+  return squareImageId;
+}
+
+async function syncItemPhotosToSquare(env: Bindings, itemId: string, squareObjectId: string) {
+  const photos = await listItemPhotos(supabaseConfig(env), itemId);
+  const currentMain = photos.find((photo) => photo.role === "main");
+  const staleMainPhotos = currentMain
+    ? photos.filter((photo) => photo.role === "main" && photo.item_photo_id !== currentMain.item_photo_id)
+    : [];
+  const currentPhotos = photos.filter((photo) => photo.role === "sub" || photo.item_photo_id === currentMain?.item_photo_id);
+  const failures: string[] = [];
+  let synced = 0;
+  let currentMainSynced = Boolean(currentMain?.square_image_id);
+  for (const photo of currentPhotos) {
+    if (photo.square_image_id) continue;
+    try {
+      await syncPhotoToSquare(env, photo, squareObjectId);
+      synced += 1;
+      if (photo.item_photo_id === currentMain?.item_photo_id) currentMainSynced = true;
+    } catch (error) {
+      console.error("Square image sync failed", photo.item_photo_id, error);
+      failures.push(photo.item_photo_id);
+    }
+  }
+
+  if (currentMainSynced) {
+    for (const stalePhoto of staleMainPhotos) {
+      try {
+        if (stalePhoto.square_image_id) await deleteCatalogImage(squareConfig(env), stalePhoto.square_image_id);
+        await env.ITEM_IMAGES.delete(stalePhoto.storage_path);
+        await deleteItemPhoto(supabaseConfig(env), itemId, stalePhoto.item_photo_id);
+      } catch (error) {
+        console.error("Stale Square main image cleanup failed", stalePhoto.item_photo_id, error);
+        failures.push(stalePhoto.item_photo_id);
+      }
+    }
+  }
+  return { synced, failures };
+}
+
 app.post("/api/items/:id/photos", async (c) => {
   const itemId = c.req.param("id");
   if (!isValidItemId(itemId)) return c.json({ error: "invalid_item_id", message: "商品IDが不正です" }, 400);
@@ -110,7 +187,7 @@ app.post("/api/items/:id/photos", async (c) => {
 
   const itemPhotoId = crypto.randomUUID();
   const storagePath = `items/${itemId}/${itemPhotoId}.${IMAGE_TYPES[contentType].extension}`;
-  const supabaseConfig = { url: c.env.SUPABASE_URL, serviceRoleKey: c.env.SUPABASE_SERVICE_ROLE_KEY };
+  const database = supabaseConfig(c.env);
 
   try {
     await c.env.ITEM_IMAGES.put(storagePath, file.stream(), {
@@ -120,11 +197,12 @@ app.post("/api/items/:id/photos", async (c) => {
 
     let photo;
     try {
-      photo = await createItemPhoto(supabaseConfig, {
+      photo = await createItemPhoto(database, {
         item_photo_id: itemPhotoId,
         item_id: itemId,
         role,
         storage_path: storagePath,
+        square_image_id: null,
         width: null,
         height: null,
         sort: 0,
@@ -134,10 +212,27 @@ app.post("/api/items/:id/photos", async (c) => {
       throw error;
     }
 
-    if (role === "main") {
+    const squareObjectId = await getItemSquareObjectId(database, itemId);
+    let squareSyncWarning: string | undefined;
+    let squareImageSynced = false;
+    if (squareObjectId) {
       try {
-        const replaced = await deleteItemPhotosByRole(supabaseConfig, itemId, role, itemPhotoId);
-        await Promise.all(replaced.map((oldPhoto) => c.env.ITEM_IMAGES.delete(oldPhoto.storage_path)));
+        const squareImageId = await syncPhotoToSquare(c.env, photo, squareObjectId);
+        photo = { ...photo, square_image_id: squareImageId };
+        squareImageSynced = true;
+      } catch (error) {
+        console.error("New photo Square sync failed", error);
+        squareSyncWarning = "写真は保存しましたが、Squareの商品画像への反映に失敗しました";
+      }
+    }
+
+    if (role === "main" && (!squareObjectId || squareImageSynced)) {
+      try {
+        const replaced = await deleteItemPhotosByRole(database, itemId, role, itemPhotoId);
+        for (const oldPhoto of replaced) {
+          if (oldPhoto.square_image_id) await deleteCatalogImage(squareConfig(c.env), oldPhoto.square_image_id);
+          await c.env.ITEM_IMAGES.delete(oldPhoto.storage_path);
+        }
       } catch (error) {
         console.error("Old main photo cleanup failed", error);
       }
@@ -151,7 +246,9 @@ app.post("/api/items/:id/photos", async (c) => {
           role: photo.role,
           storagePath: photo.storage_path,
           previewUrl: photoUrl(c.req.url, photo.storage_path),
+          squareImageId: photo.square_image_id,
         },
+        ...(squareSyncWarning ? { squareSyncWarning } : {}),
       },
       201,
     );
@@ -169,17 +266,43 @@ app.delete("/api/items/:id/photos/:photoId", async (c) => {
   }
 
   try {
-    const photo = await deleteItemPhoto(
-      { url: c.env.SUPABASE_URL, serviceRoleKey: c.env.SUPABASE_SERVICE_ROLE_KEY },
+    const database = supabaseConfig(c.env);
+    const photo = await getItemPhoto(
+      database,
       itemId,
       itemPhotoId,
     );
     if (!photo) return c.json({ error: "photo_not_found", message: "写真が見つかりません" }, 404);
+    if (photo.square_image_id) await deleteCatalogImage(squareConfig(c.env), photo.square_image_id);
     await c.env.ITEM_IMAGES.delete(photo.storage_path);
+    await deleteItemPhoto(database, itemId, itemPhotoId);
     return c.json({ ok: true });
   } catch (error) {
     console.error("Photo delete failed", error);
     return c.json({ error: "photo_delete_failed", message: "写真の削除に失敗しました" }, 500);
+  }
+});
+
+app.post("/api/items/:id/photos/sync-to-square", async (c) => {
+  const itemId = c.req.param("id");
+  if (!isValidItemId(itemId)) return c.json({ error: "invalid_item_id", message: "商品IDが不正です" }, 400);
+  try {
+    const squareObjectId = await getItemSquareObjectId(supabaseConfig(c.env), itemId);
+    if (!squareObjectId) {
+      return c.json({ error: "item_not_registered", message: "先に商品をSquareへ登録してください" }, 409);
+    }
+    const result = await syncItemPhotosToSquare(c.env, itemId, squareObjectId);
+    if (result.failures.length) {
+      return c.json({
+        error: "square_image_sync_failed",
+        message: "一部の写真をSquareへ反映できませんでした",
+        synced: result.synced,
+      }, 502);
+    }
+    return c.json({ ok: true, synced: result.synced });
+  } catch (error) {
+    console.error("Square image sync failed", error);
+    return c.json({ error: "square_image_sync_failed", message: "写真をSquareへ反映できませんでした" }, 502);
   }
 });
 
@@ -308,7 +431,20 @@ app.post("/api/items/:id/register-to-square", async (c) => {
       parsed.data,
       `square-connect-item-${itemId}`,
     );
-    return c.json(result, 201);
+    let imageSyncWarning: string | undefined;
+    try {
+      const imageSync = await syncItemPhotosToSquare(c.env, itemId, result.squareObjectId);
+      if (imageSync.failures.length) {
+        imageSyncWarning = "商品は登録しましたが、一部の写真をSquareへ反映できませんでした";
+      }
+    } catch (error) {
+      console.error("Square item created but image sync failed", error);
+      imageSyncWarning = "商品は登録しましたが、写真をSquareへ反映できませんでした";
+    }
+    return c.json({
+      ...result,
+      ...(imageSyncWarning ? { imageSyncWarning } : {}),
+    }, 201);
   } catch (error) {
     if (error instanceof DuplicateSkuError) {
       return c.json(
