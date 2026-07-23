@@ -76,8 +76,9 @@ alter table item_photos enable row level security;
 alter table square_sync_state enable row level security;
 alter table square_webhook_events enable row level security;
 
--- テスト運用中はSupabase Authを使わず、anonキーを持つブラウザから店舗・商品・写真を
--- 読み書きできるようにする。本運用時はこの3ポリシーを店舗スコープの認証ポリシーへ置き換える。
+-- テスト運用中はSupabase Authを使わず、Publishable keyを持つブラウザから
+-- anonデータベースロールで店舗・商品・写真を読み書きできるようにする。
+-- 本運用時はこの3ポリシーを店舗スコープの認証ポリシーへ置き換える。
 create policy "public stores during pilot" on stores
   for all to anon using (true) with check (true);
 
@@ -89,5 +90,5 @@ create policy "public item_photos during pilot" on item_photos
 
 grant select, insert, update, delete on stores, items, item_photos to anon;
 
--- Square同期用の2テーブルはService Roleを持つWorkerだけが操作するため、
+-- Square同期用の2テーブルはSecret keyを持つWorkerだけが操作するため、
 -- ブラウザ向けRLSポリシーは作らない。

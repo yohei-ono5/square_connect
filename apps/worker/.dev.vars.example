@@ -2,4 +2,4 @@ SQUARE_ACCESS_TOKEN=your-sandbox-token-here
 SQUARE_WEBHOOK_SIGNATURE_KEY=your-webhook-signature-key
 SQUARE_WEBHOOK_NOTIFICATION_URL=https://your-worker.example.com/api/webhooks/square
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_SECRET_KEY=sb_secret_your-backend-secret-key

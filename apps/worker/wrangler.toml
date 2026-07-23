@@ -12,7 +12,7 @@ bucket_name = "square-connect-images"
 
 # 秘密情報は `wrangler secret put SQUARE_ACCESS_TOKEN`、
 # `wrangler secret put SQUARE_WEBHOOK_SIGNATURE_KEY`、
-# `wrangler secret put SUPABASE_SERVICE_ROLE_KEY` で登録する（このファイルには書かない）。
+# `wrangler secret put SUPABASE_SECRET_KEY` で登録する（このファイルには書かない）。
 # ローカル開発では .dev.vars（.dev.vars.example を参照、gitignore対象）を使う。
 
 [assets]

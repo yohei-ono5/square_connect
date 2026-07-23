@@ -1,6 +1,6 @@
 export type SupabaseConfig = {
   url: string;
-  serviceRoleKey: string;
+  secretKey: string;
 };
 
 export type ItemPhotoRecord = {
@@ -67,9 +67,8 @@ export async function saveItemPhotoSquareImageId(
 }
 
 function assertConfig(config: SupabaseConfig) {
-  if (!config.url || !config.serviceRoleKey) {
-    throw new Error("Supabase sync is not configured");
-  }
+  if (!config.url) throw new Error("SUPABASE_URL is not configured");
+  if (!config.secretKey) throw new Error("SUPABASE_SECRET_KEY is not configured");
 }
 
 async function supabaseRequest(
@@ -81,8 +80,9 @@ async function supabaseRequest(
   const response = await fetch(`${config.url.replace(/\/$/, "")}/rest/v1/${path}`, {
     ...init,
     headers: {
-      apikey: config.serviceRoleKey,
-      Authorization: `Bearer ${config.serviceRoleKey}`,
+      // Supabaseの新しいSecret keyはJWTではないため、Authorizationには設定しない。
+      // バックエンドからのData API呼び出しはapikeyヘッダーだけで認証する。
+      apikey: config.secretKey,
       "Content-Type": "application/json",
       ...init.headers,
     },

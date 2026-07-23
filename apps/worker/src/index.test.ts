@@ -16,7 +16,7 @@ const env = {
   SQUARE_WEBHOOK_SIGNATURE_KEY: "webhook-secret",
   SQUARE_WEBHOOK_NOTIFICATION_URL: "https://worker.example.com/api/webhooks/square",
   SUPABASE_URL: "https://project.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+  SUPABASE_SECRET_KEY: "sb_secret_test",
 };
 
 function squareResponse(body: unknown, status = 200): Response {
@@ -88,6 +88,9 @@ describe("item photo storage", () => {
     expect(r2Put.mock.calls[0][1]).toBeInstanceOf(ArrayBuffer);
     expect(String(r2Put.mock.calls[0][0])).toMatch(new RegExp(`^items/${itemId}/[0-9a-f-]+\\.png$`));
     expect(fetchSpy.mock.calls[0][0]).toBe("https://project.supabase.co/rest/v1/item_photos");
+    const supabaseHeaders = new Headers(fetchSpy.mock.calls[0][1]?.headers);
+    expect(supabaseHeaders.get("apikey")).toBe("sb_secret_test");
+    expect(supabaseHeaders.has("Authorization")).toBe(false);
     expect(fetchSpy.mock.calls[1][0]).toContain(`items?item_id=eq.${itemId}&select=square_object_id`);
     expect(fetchSpy.mock.calls[2][0]).toContain(`item_photos?item_id=eq.${itemId}&role=eq.main`);
   });

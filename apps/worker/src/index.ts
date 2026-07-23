@@ -34,7 +34,7 @@ type Bindings = {
   SQUARE_WEBHOOK_SIGNATURE_KEY: string;
   SQUARE_WEBHOOK_NOTIFICATION_URL: string;
   SUPABASE_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_SECRET_KEY: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -89,7 +89,7 @@ function squareConfig(env: Bindings) {
 }
 
 function supabaseConfig(env: Bindings) {
-  return { url: env.SUPABASE_URL, serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY };
+  return { url: env.SUPABASE_URL, secretKey: env.SUPABASE_SECRET_KEY };
 }
 
 async function syncPhotoToSquare(
@@ -370,7 +370,7 @@ app.post("/api/webhooks/square", async (c) => {
 
   const supabaseConfig = {
     url: c.env.SUPABASE_URL,
-    serviceRoleKey: c.env.SUPABASE_SERVICE_ROLE_KEY,
+    secretKey: c.env.SUPABASE_SECRET_KEY,
   };
   try {
     const beginTime = (await getLastCatalogUpdatedAt(supabaseConfig, merchantId)) ?? "1970-01-01T00:00:00Z";
