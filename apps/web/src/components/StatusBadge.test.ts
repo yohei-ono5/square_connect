@@ -47,8 +47,8 @@ describe("getSquareSyncStatus", () => {
     }))).toBe("pending");
   });
 
-  it("marks matching timestamps and photos as synced", () => {
-    expect(getSquareSyncStatus(item())).toBe("synced");
+  it("marks matching timestamps and photos as reflected", () => {
+    expect(getSquareSyncStatus(item())).toBe("reflected");
   });
 
   it("prioritizes a Square deletion over the sync timestamp", () => {

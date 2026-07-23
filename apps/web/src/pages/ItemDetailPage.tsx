@@ -6,6 +6,7 @@ import {
   detectInitialMeasurePoints,
   DEFAULT_MEASURE_POINTS,
   type MeasurePointKey,
+  type MeasurePoints,
 } from "@square-connect/measure";
 import { useItems, type PhotoRole } from "../store/ItemsContext";
 import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
@@ -46,6 +47,12 @@ const MEASURE_ROWS: { label: string; key: "lengthCm" | "chestCm" | "shoulderCm" 
   { label: "肩幅", key: "shoulderCm", lineKey: "shoulder" },
   { label: "袖丈", key: "sleeveCm", lineKey: "sleeve" },
 ];
+type MeasurementKey = (typeof MEASURE_ROWS)[number]["key"];
+type AutoMeasureResult = {
+  points: MeasurePoints;
+  measurements: ReturnType<typeof calculateMeasurements>;
+  detected: boolean;
+};
 
 function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -80,6 +87,7 @@ export function ItemDetailPage() {
   const [activePoint, setActivePoint] = useState<MeasurePointKey | null>(null);
   const [measuring, setMeasuring] = useState(false);
   const [detected, setDetected] = useState<boolean | null>(null);
+  const [autoMeasureResult, setAutoMeasureResult] = useState<AutoMeasureResult | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [savingAction, setSavingAction] = useState<"draft" | "square" | null>(null);
   const [refreshingSquare, setRefreshingSquare] = useState(false);
@@ -87,7 +95,7 @@ export function ItemDetailPage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const automaticSquareRefreshRef = useRef<string | null>(null);
+  const automaticSquareRefreshRef = useRef<{ squareObjectId: string; requestedAt: number } | null>(null);
   const saving = savingAction !== null;
 
   useEffect(() => {
@@ -96,21 +104,37 @@ export function ItemDetailPage() {
 
   useEffect(() => {
     const squareObjectId = item?.squareObjectId;
-    if (
-      !id ||
-      !squareObjectId ||
-      squareSyncStatus !== "synced" ||
-      automaticSquareRefreshRef.current === squareObjectId
-    ) return;
-    automaticSquareRefreshRef.current = squareObjectId;
-    setRefreshingSquare(true);
-    setSaveError(null);
-    refreshItemFromSquare(id)
-      .catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : "Squareの最新情報を取得できませんでした");
-      })
-      .finally(() => setRefreshingSquare(false));
-  }, [id, item?.squareObjectId, squareSyncStatus, refreshItemFromSquare]);
+    if (!id || !squareObjectId || squareSyncStatus !== "reflected") return;
+
+    const refreshIfStale = () => {
+      if (document.visibilityState === "hidden" || refreshingSquare) return;
+      const lastRequest = automaticSquareRefreshRef.current;
+      if (
+        lastRequest?.squareObjectId === squareObjectId &&
+        Date.now() - lastRequest.requestedAt < 30_000
+      ) return;
+
+      automaticSquareRefreshRef.current = { squareObjectId, requestedAt: Date.now() };
+      setRefreshingSquare(true);
+      setSaveError(null);
+      refreshItemFromSquare(id)
+        .catch((error: unknown) => {
+          setSaveError(error instanceof Error ? error.message : "Squareの最新情報を取得できませんでした");
+        })
+        .finally(() => setRefreshingSquare(false));
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshIfStale();
+    };
+
+    refreshIfStale();
+    window.addEventListener("focus", refreshIfStale);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refreshIfStale);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [id, item?.squareObjectId, squareSyncStatus, refreshItemFromSquare, refreshingSquare]);
 
   if (!item && itemsLoading) {
     return (
@@ -270,11 +294,37 @@ export function ItemDetailPage() {
     setMeasuring(true);
     try {
       const { points, detected: matched } = await detectInitialMeasurePoints(mainPhoto.previewUrl);
-      updateItem(id, { measurePoints: points, measurements: calculateMeasurements(points) });
-      setDetected(matched);
+      setAutoMeasureResult({ points, measurements: calculateMeasurements(points), detected: matched });
     } finally {
       setMeasuring(false);
     }
+  }
+
+  function applyAutoMeasure() {
+    if (!id || !autoMeasureResult) return;
+    updateItem(id, {
+      measurePoints: autoMeasureResult.points,
+      measurements: autoMeasureResult.measurements,
+    });
+    setDetected(autoMeasureResult.detected);
+    setAutoMeasureResult(null);
+  }
+
+  function updateManualMeasurement(key: MeasurementKey, rawValue: string) {
+    if (!id) return;
+    const currentMeasurements = currentItem.measurements ?? {
+      shoulderCm: null,
+      chestCm: null,
+      lengthCm: null,
+      sleeveCm: null,
+    };
+    if (rawValue === "") {
+      updateItem(id, { measurements: { ...currentMeasurements, [key]: null } });
+      return;
+    }
+    const value = Number(rawValue);
+    if (!Number.isFinite(value) || value < 0 || value > 300) return;
+    updateItem(id, { measurements: { ...currentMeasurements, [key]: value } });
   }
 
   function updateMeasurePoint(key: MeasurePointKey, clientX: number, clientY: number, element: HTMLDivElement) {
@@ -413,149 +463,176 @@ export function ItemDetailPage() {
 
       {tab === "measure" && (
         <div className="content">
+          <p className="field-heading">手動入力</p>
+          <p className="hint" style={{ marginTop: 0 }}>
+            写真がなくても入力・保存できます。測っていない項目は空欄のままで構いません。
+          </p>
+          <table className="measure-table manual-measure-table">
+            <tbody>
+              {MEASURE_ROWS.map(({ label, key, lineKey }) => (
+                <tr key={key}>
+                  <td style={{ color: "var(--text-secondary)" }}>
+                    <span
+                      className="measure-color-dot"
+                      style={{ background: MEASURE_LINE_COLORS[lineKey] }}
+                      aria-hidden="true"
+                    />
+                    <label htmlFor={`measurement-${key}`}>{label}</label>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <input
+                      id={`measurement-${key}`}
+                      className="input"
+                      style={{ width: 100, textAlign: "right", display: "inline-block" }}
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      max="300"
+                      step="0.1"
+                      value={currentItem.measurements?.[key] ?? ""}
+                      onChange={(event) => updateManualMeasurement(key, event.target.value)}
+                    />{" "}
+                    cm
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="hint">0〜300cmの範囲で、0.1cm単位まで入力できます。</p>
+
+          <div className="measure-section-divider" />
+          <p className="field-heading">写真から自動入力（試験機能）</p>
           {!mainPhoto ? (
             <p className="hint" style={{ margin: 0 }}>
-              正面写真をアップロードすると自動採寸が使えます。<button type="button" className="btn" style={{ marginLeft: 8 }} onClick={() => setTab("photo")}>写真タブへ</button>
+              自動入力を試す場合は正面写真が必要です。手動入力だけで保存することもできます。
+              <button type="button" className="btn" style={{ marginLeft: 8 }} onClick={() => setTab("photo")}>
+                写真タブへ
+              </button>
             </p>
           ) : (
             <>
               <div className="measure-card">
                 <img src={mainPhoto.previewUrl} alt="正面" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
                 <div style={{ flex: 1 }}>
-                  {item.measurements ? (
-                    <>
-                      <p style={{ fontSize: 13, margin: 0 }}>
-                        {detected === false ? "Tシャツを検出できませんでした" : "Tシャツを検出して仮配置しました"}
-                      </p>
-                      <p
-                        style={{
-                          fontSize: 12,
-                          color: detected === false ? "var(--warning-text)" : "var(--accent)",
-                          margin: "2px 0 0",
-                        }}
-                      >
-                        {detected === false ? "中央に仮配置・要確認" : "検出精度は目安・要確認"}
-                      </p>
-                    </>
-                  ) : (
-                    <p style={{ fontSize: 13, margin: 0 }}>{measuring ? "検出中…" : "まだ計測していません"}</p>
-                  )}
+                  <p style={{ fontSize: 13, margin: 0 }}>
+                    {measuring ? "検出中…" : autoMeasureResult ? "自動入力の候補を作成しました" : "写真から採寸候補を作成します"}
+                  </p>
+                  <p className="hint" style={{ margin: "2px 0 0" }}>
+                    候補は確認してから手動入力欄へ反映します
+                  </p>
                 </div>
                 <button type="button" className="btn" onClick={runAutoMeasure} disabled={measuring}>
-                  {item.measurements ? "再検出" : "自動検出を実行"}
+                  {autoMeasureResult || currentItem.measurePoints ? "再検出" : "自動検出"}
                 </button>
               </div>
 
-              {item.measurements && (
-                <>
-                  <div
-                    className="measure-stage"
-                    onPointerMove={handleMeasureStagePointerMove}
-                    onPointerUp={endPointDrag}
-                    onPointerCancel={endPointDrag}
-                    onPointerLeave={endPointDrag}
-                  >
-                    <img src={mainPhoto.previewUrl} alt="採寸用正面写真" />
-                    <svg className="measure-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                      <line
-                        x1={measurePoints.shoulderL.x}
-                        y1={measurePoints.shoulderL.y}
-                        x2={measurePoints.shoulderR.x}
-                        y2={measurePoints.shoulderR.y}
-                        className="measure-line shoulder"
-                      />
-                      <line
-                        x1={measurePoints.pitL.x}
-                        y1={measurePoints.pitL.y}
-                        x2={measurePoints.pitR.x}
-                        y2={measurePoints.pitR.y}
-                        className="measure-line chest"
-                      />
-                      <line
-                        x1={measurePoints.collar.x}
-                        y1={measurePoints.collar.y}
-                        x2={measurePoints.hem.x}
-                        y2={measurePoints.hem.y}
-                        className="measure-line length"
-                      />
-                      <line
-                        x1={measurePoints.shoulderL.x}
-                        y1={measurePoints.shoulderL.y}
-                        x2={measurePoints.cuffL.x}
-                        y2={measurePoints.cuffL.y}
-                        className="measure-line sleeve"
-                      />
-                    </svg>
-                    {(Object.keys(measurePoints) as MeasurePointKey[]).map((key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        className={`measure-point ${activePoint === key ? "active" : ""}`}
-                        style={{ left: `${measurePoints[key].x}%`, top: `${measurePoints[key].y}%` }}
-                        aria-label={`${POINT_LABELS[key]}の位置`}
-                        onPointerDown={(e) => {
-                          e.preventDefault();
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                          setActivePoint(key);
-                          updateMeasurePoint(key, e.clientX, e.clientY, e.currentTarget.closest(".measure-stage") as HTMLDivElement);
-                        }}
-                        onPointerMove={(e) => {
-                          if (activePoint !== key) return;
-                          updateMeasurePoint(key, e.clientX, e.clientY, e.currentTarget.closest(".measure-stage") as HTMLDivElement);
-                        }}
-                        onPointerUp={endPointDrag}
-                        onPointerCancel={endPointDrag}
-                      />
-                    ))}
-                    {MEASURE_ROWS.map(({ label, lineKey }) => (
-                      <span
-                        key={lineKey}
-                        className="measure-line-label"
-                        style={{
-                          left: `${lineMidpoints[lineKey].x}%`,
-                          top: `${lineMidpoints[lineKey].y}%`,
-                          color: MEASURE_LINE_COLORS[lineKey],
-                        }}
-                      >
-                        {label}
-                      </span>
+              {autoMeasureResult && (
+                <div className="measure-suggestion">
+                  <p style={{ margin: 0, fontSize: 13 }}>
+                    {autoMeasureResult.detected
+                      ? "Tシャツを検出しました。数値を確認してください。"
+                      : "Tシャツを検出できなかったため、中央に仮配置した参考値です。"}
+                  </p>
+                  <div className="measure-suggestion-values">
+                    {MEASURE_ROWS.map(({ label, key }) => (
+                      <span key={key}>{label} {autoMeasureResult.measurements[key]}cm</span>
                     ))}
                   </div>
-
-                  <table className="measure-table">
-                    <tbody>
-                      {MEASURE_ROWS.map(({ label, key, lineKey }) => (
-                        <tr key={key}>
-                          <td style={{ color: "var(--text-secondary)" }}>
-                            <span
-                              className="measure-color-dot"
-                              style={{ background: MEASURE_LINE_COLORS[lineKey] }}
-                              aria-hidden="true"
-                            />
-                            {label}
-                          </td>
-                          <td style={{ textAlign: "right" }}>
-                            <input
-                              className="input"
-                              style={{ width: 90, textAlign: "right", display: "inline-block" }}
-                              type="number"
-                              step="0.1"
-                              value={item.measurements![key] ?? ""}
-                              onChange={(e) =>
-                                updateItem(id!, {
-                                  measurements: { ...item.measurements!, [key]: e.target.value === "" ? null : Number(e.target.value) },
-                                })
-                              }
-                            />{" "}
-                            cm
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
+                  <button type="button" className="btn btn-primary" onClick={applyAutoMeasure}>
+                    この値を手動入力欄へ反映
+                  </button>
+                </div>
               )}
-              <p className="hint">画像上の点をドラッグして位置を確認・調整できます。数値を直接編集することもできます。</p>
+
+              {currentItem.measurePoints && (
+                <div
+                  className="measure-stage"
+                  onPointerMove={handleMeasureStagePointerMove}
+                  onPointerUp={endPointDrag}
+                  onPointerCancel={endPointDrag}
+                  onPointerLeave={endPointDrag}
+                >
+                  <img src={mainPhoto.previewUrl} alt="採寸用正面写真" />
+                  <svg className="measure-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                    <line
+                      x1={measurePoints.shoulderL.x}
+                      y1={measurePoints.shoulderL.y}
+                      x2={measurePoints.shoulderR.x}
+                      y2={measurePoints.shoulderR.y}
+                      className="measure-line shoulder"
+                    />
+                    <line
+                      x1={measurePoints.pitL.x}
+                      y1={measurePoints.pitL.y}
+                      x2={measurePoints.pitR.x}
+                      y2={measurePoints.pitR.y}
+                      className="measure-line chest"
+                    />
+                    <line
+                      x1={measurePoints.collar.x}
+                      y1={measurePoints.collar.y}
+                      x2={measurePoints.hem.x}
+                      y2={measurePoints.hem.y}
+                      className="measure-line length"
+                    />
+                    <line
+                      x1={measurePoints.shoulderL.x}
+                      y1={measurePoints.shoulderL.y}
+                      x2={measurePoints.cuffL.x}
+                      y2={measurePoints.cuffL.y}
+                      className="measure-line sleeve"
+                    />
+                  </svg>
+                  {(Object.keys(measurePoints) as MeasurePointKey[]).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`measure-point ${activePoint === key ? "active" : ""}`}
+                      style={{ left: `${measurePoints[key].x}%`, top: `${measurePoints[key].y}%` }}
+                      aria-label={`${POINT_LABELS[key]}の位置`}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        setActivePoint(key);
+                        updateMeasurePoint(
+                          key,
+                          event.clientX,
+                          event.clientY,
+                          event.currentTarget.closest(".measure-stage") as HTMLDivElement,
+                        );
+                      }}
+                      onPointerMove={(event) => {
+                        if (activePoint !== key) return;
+                        updateMeasurePoint(
+                          key,
+                          event.clientX,
+                          event.clientY,
+                          event.currentTarget.closest(".measure-stage") as HTMLDivElement,
+                        );
+                      }}
+                      onPointerUp={endPointDrag}
+                      onPointerCancel={endPointDrag}
+                    />
+                  ))}
+                  {MEASURE_ROWS.map(({ label, lineKey }) => (
+                    <span
+                      key={lineKey}
+                      className="measure-line-label"
+                      style={{
+                        left: `${lineMidpoints[lineKey].x}%`,
+                        top: `${lineMidpoints[lineKey].y}%`,
+                        color: MEASURE_LINE_COLORS[lineKey],
+                      }}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="hint">
+                自動入力は参考値です。反映後も手動入力欄の修正を優先してください。
+                {detected !== null && (detected ? " 写真上の点も調整できます。" : " 検出できなかった場合は手動入力を使用してください。")}
+              </p>
             </>
           )}
         </div>

@@ -171,6 +171,20 @@ h1 {
   color: #b42318;
 }
 
+.square-status {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.square-checked-at {
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .list {
   list-style: none;
   margin: 0;
@@ -503,6 +517,16 @@ h1 {
   border-top: none;
 }
 
+.manual-measure-table {
+  margin-top: 4px;
+}
+
+.measure-section-divider {
+  height: 1px;
+  margin: 24px 0 20px;
+  background: var(--border);
+}
+
 .measure-card {
   display: flex;
   gap: 10px;
@@ -511,6 +535,25 @@ h1 {
   border-radius: var(--radius);
   padding: 10px;
   margin-bottom: 12px;
+}
+
+.measure-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.measure-suggestion-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .measure-stage {

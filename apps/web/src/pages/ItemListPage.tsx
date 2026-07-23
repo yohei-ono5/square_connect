@@ -3,7 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useItems, type MockItem } from "../store/ItemsContext";
 import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
 
-type StatusFilter = "all" | "synced" | "pending" | "unregistered" | "deleted";
+type StatusFilter = "all" | "reflected" | "pending" | "unregistered" | "deleted";
 type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
 
 function matchesQuery(item: MockItem, query: string): boolean {
@@ -46,7 +46,7 @@ export function ItemListPage() {
     const statuses = items.map(getSquareSyncStatus);
     return {
       total: items.length,
-      squareSynced: statuses.filter((status) => status === "synced").length,
+      squareReflected: statuses.filter((status) => status === "reflected").length,
       squarePending: statuses.filter((status) => status === "pending").length,
       squareUnregistered: statuses.filter((status) => status === "unregistered").length,
     };
@@ -166,9 +166,9 @@ export function ItemListPage() {
             <p className="stat-value">{stats.total}</p>
           </div>
           <div className="stat-card">
-            <p className="stat-label">Square同期済み</p>
+            <p className="stat-label">Square反映済み</p>
             <p className="stat-value" style={{ color: "var(--accent)" }}>
-              {stats.squareSynced}
+              {stats.squareReflected}
             </p>
           </div>
           <div className="stat-card">
@@ -190,7 +190,7 @@ export function ItemListPage() {
           />
           <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
             <option value="all">すべての状態</option>
-            <option value="synced">Square同期済み</option>
+            <option value="reflected">Square反映済み</option>
             <option value="pending">Square未反映</option>
             <option value="unregistered">Square未登録</option>
             <option value="deleted">Square側で削除済み</option>
