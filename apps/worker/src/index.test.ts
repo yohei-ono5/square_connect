@@ -50,6 +50,28 @@ afterEach(() => {
 });
 
 describe("item photo storage", () => {
+  it("serves a stored R2 image from its media URL", async () => {
+    const itemId = "22c9f0c8-a7be-4438-a1a2-1c7a6722dbd4";
+    const itemPhotoId = "499f220d-0607-496e-8922-23bebafa30e4";
+    const storagePath = `items/${itemId}/${itemPhotoId}.jpg`;
+    const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    r2Get.mockResolvedValueOnce({
+      body: imageBytes,
+      httpEtag: '"photo-etag"',
+      writeHttpMetadata(headers: Headers) {
+        headers.set("content-type", "image/jpeg");
+      },
+    });
+
+    const response = await app.request(`/media/${storagePath}`, {}, env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes);
+    expect(r2Get).toHaveBeenCalledWith(storagePath);
+  });
+
   it("stores a Square-compatible image in R2 and records it in Supabase", async () => {
     const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
     const fetchSpy = vi

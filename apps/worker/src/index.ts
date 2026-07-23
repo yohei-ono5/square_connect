@@ -320,8 +320,8 @@ app.post("/api/items/:id/photos/sync-to-square", async (c) => {
   }
 });
 
-app.get("/media/*", async (c) => {
-  const storagePath = c.req.param("*") ?? "";
+app.get("/media/:storagePath{.+}", async (c) => {
+  const storagePath = c.req.param("storagePath");
   if (!/^items\/[A-Za-z0-9_-]{1,100}\/[0-9a-f-]{36}\.(jpg|png|gif)$/i.test(storagePath)) {
     return c.notFound();
   }
