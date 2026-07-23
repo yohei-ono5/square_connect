@@ -17,3 +17,8 @@ bucket_name = "square-connect-images"
 [assets]
 directory = "../web/dist"
 not_found_handling = "single-page-application"
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
