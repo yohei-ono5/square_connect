@@ -170,7 +170,7 @@ export async function uploadItemPhoto(
   itemId: string,
   role: StoredPhoto["role"],
   file: File,
-): Promise<{ photo: StoredPhoto; squareSyncWarning: string | null }> {
+): Promise<{ photo: StoredPhoto }> {
   const validationMessage = validateSquareImage(file);
   if (validationMessage) throw new Error(validationMessage);
 
@@ -184,10 +184,9 @@ export async function uploadItemPhoto(
   const result = (await response.json().catch(() => null)) as {
     photo?: StoredPhoto;
     message?: string;
-    squareSyncWarning?: string;
   } | null;
   if (!response.ok || !result?.photo) throw new Error(result?.message ?? "写真の保存に失敗しました");
-  return { photo: result.photo, squareSyncWarning: result.squareSyncWarning ?? null };
+  return { photo: result.photo };
 }
 
 export async function syncItemPhotosToSquare(itemId: string): Promise<number> {

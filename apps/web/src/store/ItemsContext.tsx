@@ -47,7 +47,7 @@ type ItemsContextValue = {
   saveItem: (id: string) => Promise<void>;
   saveSquareRegistration: (id: string, squareObjectId: string, squareVariationId: string) => Promise<void>;
   syncPhotosToSquare: (id: string) => Promise<number>;
-  addPhoto: (id: string, role: PhotoRole, file: File) => Promise<string | null>;
+  addPhoto: (id: string, role: PhotoRole, file: File) => Promise<void>;
   removePhoto: (id: string, photoId: string) => Promise<void>;
   refreshItemFromSquare: (id: string) => Promise<void>;
   markSquareSynced: (id: string) => Promise<void>;
@@ -201,18 +201,24 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           ),
         );
       },
-      syncPhotosToSquare: (id) => syncStoredPhotosToSquare(id),
+      syncPhotosToSquare: async (id) => {
+        const synced = await syncStoredPhotosToSquare(id);
+        const storedPhotos = await listItemPhotos();
+        setItems((prev) => prev.map((item) => item.id === id
+          ? { ...item, photos: storedPhotos.filter((photo) => photo.itemId === id) }
+          : item));
+        return synced;
+      },
       addPhoto: async (id, role, file) => {
-        const { photo, squareSyncWarning } = await uploadItemPhoto(id, role, file);
+        const { photo } = await uploadItemPhoto(id, role, file);
         setItems((prev) =>
           prev.map((it) => {
             if (it.id !== id) return it;
-            // 正面は1枚のみ（既存を置き換え）。追加写真は何枚でも足せる。
-            const kept = role === "main" ? it.photos.filter((p) => p.role !== "main") : it.photos;
-            return { ...it, photos: [...kept, photo] };
+            // 新しい正面写真を先頭に表示し、古い正面写真はSquare更新が成功するまで
+            // 内部に保持する。更新失敗時もSquare・R2・Supabaseの対応を崩さない。
+            return { ...it, photos: role === "main" ? [photo, ...it.photos] : [...it.photos, photo] };
           }),
         );
-        return squareSyncWarning;
       },
       removePhoto: async (id, photoId) => {
         await deleteStoredPhoto(id, photoId);

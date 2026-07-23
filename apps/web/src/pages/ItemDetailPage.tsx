@@ -267,8 +267,7 @@ export function ItemDetailPage() {
     setPhotoBusy(true);
     setPhotoError(null);
     try {
-      const squareSyncWarning = await addPhoto(id, role, file);
-      if (squareSyncWarning) setPhotoError(squareSyncWarning);
+      await addPhoto(id, role, file);
     } catch (error) {
       setPhotoError(error instanceof Error ? error.message : "写真の保存に失敗しました");
     } finally {

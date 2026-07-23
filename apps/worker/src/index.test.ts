@@ -88,9 +88,7 @@ describe("item photo storage", () => {
             sort: 0,
           },
         ], 201),
-      )
-      .mockResolvedValueOnce(squareResponse([]))
-      .mockResolvedValueOnce(squareResponse([]));
+      );
     const body = new FormData();
     body.append("role", "main");
     body.append(
@@ -113,15 +111,13 @@ describe("item photo storage", () => {
     const supabaseHeaders = new Headers(fetchSpy.mock.calls[0][1]?.headers);
     expect(supabaseHeaders.get("apikey")).toBe("sb_secret_test");
     expect(supabaseHeaders.has("Authorization")).toBe(false);
-    expect(fetchSpy.mock.calls[1][0]).toContain(`items?item_id=eq.${itemId}&select=square_object_id`);
-    expect(fetchSpy.mock.calls[2][0]).toContain(`item_photos?item_id=eq.${itemId}&role=eq.main`);
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  it("keeps a saved photo when only the Square item lookup fails", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("does not contact Square while a photo is only being attached", async () => {
     const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
     const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
-    vi.spyOn(globalThis, "fetch")
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(squareResponse([{
         item_photo_id: itemPhotoId,
         item_id: itemId,
@@ -131,8 +127,7 @@ describe("item photo storage", () => {
         width: null,
         height: null,
         sort: 0,
-      }], 201))
-      .mockResolvedValueOnce(squareResponse({ message: "temporary failure" }, 500));
+      }], 201));
     const body = new FormData();
     body.append("role", "main");
     body.append(
@@ -147,8 +142,8 @@ describe("item photo storage", () => {
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({
       photo: { id: itemPhotoId },
-      squareSyncWarning: "写真は保存しましたが、Squareの商品画像への反映に失敗しました",
     });
+    expect(fetchSpy).toHaveBeenCalledOnce();
     expect(r2Put).toHaveBeenCalledOnce();
     expect(r2Delete).not.toHaveBeenCalled();
   });

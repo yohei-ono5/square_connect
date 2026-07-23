@@ -15,7 +15,6 @@ import {
 import {
   createItemPhoto,
   deleteItemPhoto,
-  deleteItemPhotosByRole,
   getItemPhoto,
   getItemSquareObjectId,
   getLastCatalogUpdatedAt,
@@ -216,42 +215,6 @@ app.post("/api/items/:id/photos", async (c) => {
       throw error;
     }
 
-    let squareSyncWarning: string | undefined;
-    let squareImageSynced = false;
-    let squareLookupSucceeded = false;
-    let squareObjectId: string | null = null;
-    try {
-      squareObjectId = await getItemSquareObjectId(database, itemId);
-      squareLookupSucceeded = true;
-    } catch (error) {
-      // R2とSupabaseへの写真保存は完了しているため、Square状態の確認失敗を
-      // 写真保存全体の失敗として返さない。再試行は詳細画面の「Squareを更新」で行える。
-      console.error("Photo saved but Square item lookup failed", error);
-      squareSyncWarning = "写真は保存しましたが、Squareの商品画像への反映に失敗しました";
-    }
-    if (squareObjectId) {
-      try {
-        const squareImageId = await syncPhotoToSquare(c.env, photo, squareObjectId);
-        photo = { ...photo, square_image_id: squareImageId };
-        squareImageSynced = true;
-      } catch (error) {
-        console.error("New photo Square sync failed", error);
-        squareSyncWarning = "写真は保存しましたが、Squareの商品画像への反映に失敗しました";
-      }
-    }
-
-    if (role === "main" && squareLookupSucceeded && (!squareObjectId || squareImageSynced)) {
-      try {
-        const replaced = await deleteItemPhotosByRole(database, itemId, role, itemPhotoId);
-        for (const oldPhoto of replaced) {
-          if (oldPhoto.square_image_id) await deleteCatalogImage(squareConfig(c.env), oldPhoto.square_image_id);
-          await c.env.ITEM_IMAGES.delete(oldPhoto.storage_path);
-        }
-      } catch (error) {
-        console.error("Old main photo cleanup failed", error);
-      }
-    }
-
     return c.json(
       {
         photo: {
@@ -262,7 +225,6 @@ app.post("/api/items/:id/photos", async (c) => {
           previewUrl: photoUrl(c.req.url, photo.storage_path),
           squareImageId: photo.square_image_id,
         },
-        ...(squareSyncWarning ? { squareSyncWarning } : {}),
       },
       201,
     );
