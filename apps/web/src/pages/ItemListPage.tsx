@@ -149,12 +149,22 @@ export function ItemListPage() {
         setSquareRefreshNotice("Square登録済みの更新対象商品はありません");
         return;
       }
+      if (result.changed === 0) {
+        const details = [
+          `${result.unchanged}件に差分なし`,
+          ...(result.missing > 0 ? [`${result.missing}件がSquareで見つかりません`] : []),
+        ];
+        setSquareRefreshNotice(`Square側の変更はありませんでした（${details.join("、")}）`);
+        return;
+      }
       const details = [
-        `${result.updated}件を更新`,
-        ...(result.deleted > 0 ? [`${result.deleted}件がSquare側で削除済み`] : []),
+        ...(result.deleted > 0 ? [`うち${result.deleted}件がSquare側で削除済み`] : []),
+        ...(result.unchanged > 0 ? [`${result.unchanged}件は差分なし`] : []),
         ...(result.missing > 0 ? [`${result.missing}件がSquareで見つかりません`] : []),
       ];
-      setSquareRefreshNotice(`Squareの最新情報を取得しました（${details.join("、")}）`);
+      setSquareRefreshNotice(
+        `Squareの変更を${result.changed}件反映しました${details.length > 0 ? `（${details.join("、")}）` : ""}`,
+      );
     } catch (error) {
       setSquareRefreshError(error instanceof Error ? error.message : "Squareの商品一覧を更新できませんでした");
     } finally {

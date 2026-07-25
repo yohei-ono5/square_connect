@@ -20,12 +20,13 @@ import {
   getItemPhoto,
   getItemSquareObjectId,
   getLastCatalogUpdatedAt,
-  listActiveSquareObjectIds,
+  listActiveSquareItems,
   listItemPhotos,
   recordWebhookEvent,
   saveCatalogUpdatedAt,
   saveItemPhotoSquareImageId,
   updateItemBySquareId,
+  type ActiveSquareItem,
   type SquareItemPatch,
 } from "./supabase";
 import { verifySquareWebhookSignature } from "./webhook";
@@ -134,6 +135,19 @@ async function updateSquareSnapshots(
       ),
     );
   }
+}
+
+function hasSquareSnapshotChanged(item: ActiveSquareItem, snapshot: SquareItemSnapshot): boolean {
+  if (snapshot.isDeleted) return item.square_deleted_at === null;
+  return (
+    item.square_deleted_at !== null
+    || (snapshot.mgmtNo !== undefined && snapshot.mgmtNo !== item.mgmt_no)
+    || (snapshot.title !== undefined && snapshot.title !== item.title)
+    || (snapshot.price !== undefined && snapshot.price !== item.price)
+    || (snapshot.description ?? null) !== item.description
+    || (snapshot.squareVariationId !== undefined
+      && snapshot.squareVariationId !== item.square_variation_id)
+  );
 }
 
 async function syncPhotoToSquare(
@@ -531,20 +545,27 @@ app.post("/api/items/sync-active-from-square", async (c) => {
   try {
     const database = supabaseConfig(c.env);
     // 一覧と同じ条件（未アーカイブ）かつSquare登録済みの商品だけを対象にする。
-    const squareObjectIds = await listActiveSquareObjectIds(database);
+    const activeItems = await listActiveSquareItems(database);
+    const squareObjectIds = activeItems.map((item) => item.square_object_id);
     if (squareObjectIds.length === 0) {
-      return c.json({ targeted: 0, updated: 0, deleted: 0, missing: 0 });
+      return c.json({ targeted: 0, changed: 0, unchanged: 0, deleted: 0, missing: 0 });
     }
 
     const snapshots = await batchRetrieveSquareItems(squareConfig(c.env), squareObjectIds);
     const syncedAt = new Date().toISOString();
+    const currentItems = new Map(activeItems.map((item) => [item.square_object_id, item]));
+    const changedSnapshots = snapshots.filter((snapshot) => {
+      const currentItem = currentItems.get(snapshot.squareObjectId);
+      return currentItem ? hasSquareSnapshotChanged(currentItem, snapshot) : false;
+    });
     await updateSquareSnapshots(database, snapshots, syncedAt);
 
     const returnedIds = new Set(snapshots.map((snapshot) => snapshot.squareObjectId));
     return c.json({
       targeted: squareObjectIds.length,
-      updated: snapshots.filter((snapshot) => !snapshot.isDeleted).length,
-      deleted: snapshots.filter((snapshot) => snapshot.isDeleted).length,
+      changed: changedSnapshots.length,
+      unchanged: snapshots.length - changedSnapshots.length,
+      deleted: changedSnapshots.filter((snapshot) => snapshot.isDeleted).length,
       missing: squareObjectIds.filter((id) => !returnedIds.has(id)).length,
       syncedAt,
     });

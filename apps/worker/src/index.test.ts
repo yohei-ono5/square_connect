@@ -518,8 +518,24 @@ describe("POST /api/items/sync-active-from-square", () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(squareResponse([
-        { square_object_id: "square-item-1" },
-        { square_object_id: "square-item-2" },
+        {
+          square_object_id: "square-item-1",
+          square_variation_id: "old-variation",
+          mgmt_no: "T0001",
+          title: "更新前商品",
+          price: 1000,
+          description: null,
+          square_deleted_at: null,
+        },
+        {
+          square_object_id: "square-item-2",
+          square_variation_id: "square-variation-2",
+          mgmt_no: "T0002",
+          title: "削除対象商品",
+          price: 2000,
+          description: null,
+          square_deleted_at: null,
+        },
       ]))
       .mockResolvedValueOnce(squareResponse({
         objects: [
@@ -560,12 +576,13 @@ describe("POST /api/items/sync-active-from-square", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       targeted: 2,
-      updated: 1,
+      changed: 2,
+      unchanged: 0,
       deleted: 1,
       missing: 0,
     });
     expect(fetchSpy.mock.calls[0][0]).toBe(
-      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id",
+      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_deleted_at",
     );
     expect(fetchSpy.mock.calls[1][0]).toBe(
       "https://connect.squareupsandbox.com/v2/catalog/batch-retrieve",
@@ -600,8 +617,68 @@ describe("POST /api/items/sync-active-from-square", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ targeted: 0, updated: 0, deleted: 0, missing: 0 });
+    expect(await response.json()).toEqual({
+      targeted: 0,
+      changed: 0,
+      unchanged: 0,
+      deleted: 0,
+      missing: 0,
+    });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports no changes when the Square values match Supabase", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{
+        square_object_id: "square-item-1",
+        square_variation_id: "square-variation-1",
+        mgmt_no: "T0111",
+        title: "更新商品",
+        price: 5100,
+        description: "同じ説明",
+        square_deleted_at: null,
+      }]))
+      .mockResolvedValueOnce(squareResponse({
+        objects: [{
+          type: "ITEM",
+          id: "square-item-1",
+          version: 333,
+          item_data: {
+            name: "更新商品 T0111",
+            description: "同じ説明",
+            variations: [{
+              type: "ITEM_VARIATION",
+              id: "square-variation-1",
+              item_variation_data: {
+                sku: "T0111",
+                price_money: { amount: 5100, currency: "JPY" },
+              },
+            }],
+          },
+        }],
+      }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const response = await app.request(
+      "/api/items/sync-active-from-square",
+      { method: "POST" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      targeted: 1,
+      changed: 0,
+      unchanged: 1,
+      deleted: 0,
+      missing: 0,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+      square_synced_at: expect.any(String),
+      square_version: 333,
+    });
   });
 });
 

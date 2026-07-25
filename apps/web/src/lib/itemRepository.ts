@@ -211,7 +211,8 @@ export type SquareItemRefresh = {
 
 export type SquareListRefreshResult = {
   targeted: number;
-  updated: number;
+  changed: number;
+  unchanged: number;
   deleted: number;
   missing: number;
   syncedAt?: string;

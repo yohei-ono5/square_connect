@@ -26,13 +26,29 @@ export async function getItemSquareObjectId(
   return rows[0]?.square_object_id ?? null;
 }
 
-export async function listActiveSquareObjectIds(config: SupabaseConfig): Promise<string[]> {
+export type ActiveSquareItem = {
+  square_object_id: string;
+  square_variation_id: string | null;
+  mgmt_no: string;
+  title: string;
+  price: number;
+  description: string | null;
+  square_deleted_at: string | null;
+};
+
+export async function listActiveSquareItems(config: SupabaseConfig): Promise<ActiveSquareItem[]> {
   const response = await supabaseRequest(
     config,
-    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id",
+    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_deleted_at",
   );
-  const rows = (await response.json()) as { square_object_id: string | null }[];
-  return [...new Set(rows.flatMap((row) => row.square_object_id ? [row.square_object_id] : []))];
+  const rows = (await response.json()) as Array<ActiveSquareItem & { square_object_id: string | null }>;
+  const items = new Map<string, ActiveSquareItem>();
+  for (const row of rows) {
+    if (row.square_object_id) {
+      items.set(row.square_object_id, { ...row, square_object_id: row.square_object_id });
+    }
+  }
+  return [...items.values()];
 }
 
 export async function listItemPhotos(
