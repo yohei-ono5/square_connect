@@ -209,6 +209,27 @@ export type SquareItemRefresh = {
   syncedAt: string;
 };
 
+export type SquareListRefreshResult = {
+  targeted: number;
+  updated: number;
+  deleted: number;
+  missing: number;
+  syncedAt?: string;
+};
+
+export async function refreshActiveItemsFromSquare(): Promise<SquareListRefreshResult> {
+  const response = await fetch(`${WORKER_BASE_URL}/api/items/sync-active-from-square`, {
+    method: "POST",
+  });
+  const result = (await response.json().catch(() => null)) as
+    | (SquareListRefreshResult & { message?: string })
+    | null;
+  if (!response.ok || !result) {
+    throw new Error(result?.message ?? "Squareの商品一覧を更新できませんでした");
+  }
+  return result;
+}
+
 export async function refreshItemFromSquare(itemId: string): Promise<SquareItemRefresh> {
   const response = await fetch(
     `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/sync-from-square`,

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { RegisterToSquareInputSchema, UpdateSquareItemInputSchema } from "@square-connect/shared";
 import {
+  batchRetrieveSquareItems,
   deleteCatalogImage,
   DuplicateSkuError,
   listSquareCategories,
@@ -11,6 +12,7 @@ import {
   searchChangedSquareItems,
   updateItemInSquare,
   uploadCatalogImage,
+  type SquareItemSnapshot,
 } from "./square";
 import {
   createItemPhoto,
@@ -18,11 +20,13 @@ import {
   getItemPhoto,
   getItemSquareObjectId,
   getLastCatalogUpdatedAt,
+  listActiveSquareObjectIds,
   listItemPhotos,
   recordWebhookEvent,
   saveCatalogUpdatedAt,
   saveItemPhotoSquareImageId,
   updateItemBySquareId,
+  type SquareItemPatch,
 } from "./supabase";
 import { verifySquareWebhookSignature } from "./webhook";
 
@@ -89,6 +93,47 @@ function squareConfig(env: Bindings) {
 
 function supabaseConfig(env: Bindings) {
   return { url: env.SUPABASE_URL, secretKey: env.SUPABASE_SECRET_KEY };
+}
+
+function squareSnapshotPatch(snapshot: SquareItemSnapshot, syncedAt: string): SquareItemPatch {
+  if (snapshot.isDeleted) {
+    return {
+      square_version: snapshot.version,
+      square_synced_at: syncedAt,
+      square_deleted_at: syncedAt,
+      updated_at: syncedAt,
+    };
+  }
+  return {
+    ...(snapshot.mgmtNo ? { mgmt_no: snapshot.mgmtNo } : {}),
+    ...(snapshot.title ? { title: snapshot.title } : {}),
+    ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
+    description: snapshot.description ?? null,
+    ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
+    square_version: snapshot.version,
+    square_synced_at: syncedAt,
+    square_deleted_at: null,
+    updated_at: syncedAt,
+  };
+}
+
+async function updateSquareSnapshots(
+  database: ReturnType<typeof supabaseConfig>,
+  snapshots: SquareItemSnapshot[],
+  syncedAt: string,
+): Promise<void> {
+  // Supabaseへ一度に大量接続しないよう、最大10件ずつ更新する。
+  for (let offset = 0; offset < snapshots.length; offset += 10) {
+    await Promise.all(
+      snapshots.slice(offset, offset + 10).map((snapshot) =>
+        updateItemBySquareId(
+          database,
+          snapshot.squareObjectId,
+          squareSnapshotPatch(snapshot, syncedAt),
+        ),
+      ),
+    );
+  }
 }
 
 async function syncPhotoToSquare(
@@ -479,6 +524,37 @@ app.patch("/api/items/:id/square", async (c) => {
     }
     console.error("Square update failed", error);
     return c.json({ error: "configuration_error", message: "Square連携の設定を確認してください" }, 500);
+  }
+});
+
+app.post("/api/items/sync-active-from-square", async (c) => {
+  try {
+    const database = supabaseConfig(c.env);
+    // 一覧と同じ条件（未アーカイブ）かつSquare登録済みの商品だけを対象にする。
+    const squareObjectIds = await listActiveSquareObjectIds(database);
+    if (squareObjectIds.length === 0) {
+      return c.json({ targeted: 0, updated: 0, deleted: 0, missing: 0 });
+    }
+
+    const snapshots = await batchRetrieveSquareItems(squareConfig(c.env), squareObjectIds);
+    const syncedAt = new Date().toISOString();
+    await updateSquareSnapshots(database, snapshots, syncedAt);
+
+    const returnedIds = new Set(snapshots.map((snapshot) => snapshot.squareObjectId));
+    return c.json({
+      targeted: squareObjectIds.length,
+      updated: snapshots.filter((snapshot) => !snapshot.isDeleted).length,
+      deleted: snapshots.filter((snapshot) => snapshot.isDeleted).length,
+      missing: squareObjectIds.filter((id) => !returnedIds.has(id)).length,
+      syncedAt,
+    });
+  } catch (error) {
+    if (error instanceof SquareApiError) {
+      console.error("Square active item sync failed", error.status, error.errors);
+      return c.json({ error: "square_api_error", message: "Squareの商品一覧を更新できませんでした" }, 502);
+    }
+    console.error("Square active item sync failed", error);
+    return c.json({ error: "sync_failed", message: "商品一覧の更新に失敗しました" }, 500);
   }
 });
 

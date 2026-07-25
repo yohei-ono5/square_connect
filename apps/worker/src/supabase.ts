@@ -26,6 +26,15 @@ export async function getItemSquareObjectId(
   return rows[0]?.square_object_id ?? null;
 }
 
+export async function listActiveSquareObjectIds(config: SupabaseConfig): Promise<string[]> {
+  const response = await supabaseRequest(
+    config,
+    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id",
+  );
+  const rows = (await response.json()) as { square_object_id: string | null }[];
+  return [...new Set(rows.flatMap((row) => row.square_object_id ? [row.square_object_id] : []))];
+}
+
 export async function listItemPhotos(
   config: SupabaseConfig,
   itemId: string,

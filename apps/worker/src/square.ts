@@ -74,6 +74,11 @@ type RetrieveCatalogResponse = {
   errors?: SquareError[];
 };
 
+type BatchRetrieveCatalogResponse = {
+  objects?: CatalogItemObject[];
+  errors?: SquareError[];
+};
+
 export class SquareApiError extends Error {
   constructor(
     public readonly status: number,
@@ -432,6 +437,34 @@ export async function retrieveSquareItem(
   const snapshot = retrieved.object ? catalogItemToSnapshot(retrieved.object) : null;
   if (!snapshot) throw new SquareApiError(404, [{ detail: "Square item was not found" }]);
   return snapshot;
+}
+
+export async function batchRetrieveSquareItems(
+  config: SquareConfig,
+  squareObjectIds: string[],
+  fetcher: typeof fetch = fetch,
+): Promise<SquareItemSnapshot[]> {
+  if (!config.accessToken) throw new Error("SQUARE_ACCESS_TOKEN is not configured");
+  const uniqueIds = [...new Set(squareObjectIds)];
+  const snapshots: SquareItemSnapshot[] = [];
+
+  for (let offset = 0; offset < uniqueIds.length; offset += 1000) {
+    const response = await squareRequest<BatchRetrieveCatalogResponse>(
+      config,
+      "/v2/catalog/batch-retrieve",
+      {
+        object_ids: uniqueIds.slice(offset, offset + 1000),
+        include_related_objects: false,
+        include_deleted_objects: true,
+      },
+      fetcher,
+    );
+    for (const item of response.objects ?? []) {
+      const snapshot = catalogItemToSnapshot(item);
+      if (snapshot) snapshots.push(snapshot);
+    }
+  }
+  return snapshots;
 }
 
 export async function searchChangedSquareItems(

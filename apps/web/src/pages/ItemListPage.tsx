@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { GENDER_LABELS, type Gender } from "@square-connect/shared";
 import { useItems, type MockItem } from "../store/ItemsContext";
-import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
+import { StatusBadge } from "../components/StatusBadge";
 
-type StatusFilter = "all" | "reflected" | "pending" | "unregistered" | "deleted";
 type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
+type GenderFilter = "all" | NonNullable<Gender>;
 
 function matchesQuery(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return (
     item.title.toLowerCase().includes(q) ||
-    item.mgmtNo.toLowerCase().includes(q) ||
-    (item.category ?? "").toLowerCase().includes(q)
+    item.mgmtNo.toLowerCase().includes(q)
   );
 }
 
@@ -22,15 +22,32 @@ export function ItemListPage() {
     notice?: string;
     noticeType?: "success" | "warning";
   } | null);
-  const { items, itemsLoading, itemsError, reloadItems, archiveItem } = useItems();
+  const {
+    items,
+    itemsLoading,
+    itemsError,
+    reloadItems,
+    archiveItem,
+    refreshActiveItemsFromSquare,
+    squareCategories,
+    loadSquareCategories,
+  } = useItems();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [genderFilter, setGenderFilter] = useState<GenderFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("mgmtNoAsc");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [squareRefreshing, setSquareRefreshing] = useState(false);
+  const [squareRefreshNotice, setSquareRefreshNotice] = useState<string | null>(null);
+  const [squareRefreshError, setSquareRefreshError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadSquareCategories();
+  }, [loadSquareCategories]);
 
   useEffect(() => {
     const handleFocus = () => {
@@ -42,20 +59,19 @@ export function ItemListPage() {
     return () => window.removeEventListener("focus", handleFocus);
   }, [reloadItems]);
 
-  const stats = useMemo(() => {
-    const statuses = items.map(getSquareSyncStatus);
-    return {
-      total: items.length,
-      squareReflected: statuses.filter((status) => status === "reflected").length,
-      squarePending: statuses.filter((status) => status === "pending").length,
-      squareUnregistered: statuses.filter((status) => status === "unregistered").length,
-    };
-  }, [items]);
+  const categoryOptions = useMemo(
+    () => [...new Set([
+      ...(squareCategories ?? []).map((category) => category.name),
+      ...items.flatMap((item) => item.category ? [item.category] : []),
+    ])].sort((a, b) => a.localeCompare(b, "ja")),
+    [items, squareCategories],
+  );
 
   const visibleItems = useMemo(() => {
     const filtered = items.filter((it) => {
       if (!matchesQuery(it, query)) return false;
-      if (statusFilter !== "all") return getSquareSyncStatus(it) === statusFilter;
+      if (categoryFilter !== "all" && it.category !== categoryFilter) return false;
+      if (genderFilter !== "all" && it.gender !== genderFilter) return false;
       return true;
     });
     // mgmtNoは数字のみの想定（先頭ゼロは表示用の文字列としてのみ保持）なので、
@@ -66,7 +82,7 @@ export function ItemListPage() {
     if (sortKey === "priceDesc") filtered.sort((a, b) => b.price - a.price);
     if (sortKey === "title") filtered.sort((a, b) => a.title.localeCompare(b.title, "ja"));
     return filtered;
-  }, [items, query, statusFilter, sortKey]);
+  }, [items, query, categoryFilter, genderFilter, sortKey]);
 
   useEffect(() => {
     const visibleIds = new Set(visibleItems.map((item) => item.id));
@@ -122,10 +138,34 @@ export function ItemListPage() {
     }
   }
 
+  async function handleSquareListRefresh() {
+    if (squareRefreshing) return;
+    setSquareRefreshing(true);
+    setSquareRefreshNotice(null);
+    setSquareRefreshError(null);
+    try {
+      const result = await refreshActiveItemsFromSquare();
+      if (result.targeted === 0) {
+        setSquareRefreshNotice("Square登録済みの更新対象商品はありません");
+        return;
+      }
+      const details = [
+        `${result.updated}件を更新`,
+        ...(result.deleted > 0 ? [`${result.deleted}件がSquare側で削除済み`] : []),
+        ...(result.missing > 0 ? [`${result.missing}件がSquareで見つかりません`] : []),
+      ];
+      setSquareRefreshNotice(`Squareの最新情報を取得しました（${details.join("、")}）`);
+    } catch (error) {
+      setSquareRefreshError(error instanceof Error ? error.message : "Squareの商品一覧を更新できませんでした");
+    } finally {
+      setSquareRefreshing(false);
+    }
+  }
+
   return (
     <div className="screen">
       <div className="header">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <h1>商品一覧</h1>
           <div className="header-actions">
             {selectionMode ? (
@@ -139,11 +179,21 @@ export function ItemListPage() {
               </>
             ) : (
               <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleSquareListRefresh}
+                  disabled={squareRefreshing || itemsLoading || !items.some((item) => item.squareObjectId)}
+                  aria-label="Squareから商品一覧を更新"
+                  title="Squareから商品一覧を更新"
+                >
+                  {squareRefreshing ? "更新中…" : "↻ 更新"}
+                </button>
                 <button type="button" className="btn" onClick={toggleSelectionMode} disabled={visibleItems.length === 0}>
                   選択
                 </button>
                 <Link to="/items/new" className="btn btn-primary">
-                  + 新規登録
+                  ＋登録
                 </Link>
               </>
             )}
@@ -160,48 +210,61 @@ export function ItemListPage() {
             {navigationNotice.notice}
           </p>
         )}
-        <div className="stat-grid">
-          <div className="stat-card">
-            <p className="stat-label">総数</p>
-            <p className="stat-value">{stats.total}</p>
-          </div>
-          <div className="stat-card">
-            <p className="stat-label">Square反映済み</p>
-            <p className="stat-value" style={{ color: "var(--accent)" }}>
-              {stats.squareReflected}
-            </p>
-          </div>
-          <div className="stat-card">
-            <p className="stat-label">Square未反映</p>
-            <p className="stat-value">{stats.squarePending}</p>
-          </div>
-          <div className="stat-card">
-            <p className="stat-label">Square未登録</p>
-            <p className="stat-value">{stats.squareUnregistered}</p>
-          </div>
-        </div>
-
+        {squareRefreshNotice && (
+          <p className="list-notice" role="status">
+            {squareRefreshNotice}
+          </p>
+        )}
+        {squareRefreshError && (
+          <p className="form-error" role="alert">
+            {squareRefreshError}
+          </p>
+        )}
         <div className="filter-bar">
           <input
             className="input"
-            placeholder="商品名・カテゴリ・SKUで検索"
+            placeholder="商品名・SKUで検索"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
-            <option value="all">すべての状態</option>
-            <option value="reflected">Square反映済み</option>
-            <option value="pending">Square未反映</option>
-            <option value="unregistered">Square未登録</option>
-            <option value="deleted">Square側で削除済み</option>
-          </select>
-          <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-            <option value="mgmtNoAsc">商品番号順（昇順）</option>
-            <option value="mgmtNoDesc">商品番号順（降順）</option>
-            <option value="priceAsc">価格が安い順</option>
-            <option value="priceDesc">価格が高い順</option>
-            <option value="title">商品名（あいうえお順）</option>
-          </select>
+          <div className="filter-options">
+            <select
+              className="select"
+              aria-label="カテゴリで絞り込み"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+            >
+              <option value="all">カテゴリ：すべて</option>
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+            <select
+              className="select"
+              aria-label="対象で絞り込み"
+              value={genderFilter}
+              onChange={(e) => setGenderFilter(e.target.value as GenderFilter)}
+            >
+              <option value="all">対象：すべて</option>
+              {(Object.keys(GENDER_LABELS) as NonNullable<Gender>[]).map((gender) => (
+                <option key={gender} value={gender}>
+                  {GENDER_LABELS[gender]}
+                </option>
+              ))}
+            </select>
+            <select
+              className="select filter-sort"
+              aria-label="商品の並び順"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+            >
+              <option value="mgmtNoAsc">商品番号順（昇順）</option>
+              <option value="mgmtNoDesc">商品番号順（降順）</option>
+              <option value="priceAsc">価格が安い順</option>
+              <option value="priceDesc">価格が高い順</option>
+              <option value="title">商品名順（あいうえお）</option>
+            </select>
+          </div>
         </div>
       </div>
 

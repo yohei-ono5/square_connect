@@ -8,7 +8,7 @@ import {
   type MeasurePointKey,
   type MeasurePoints,
 } from "@square-connect/measure";
-import { useItems, type PhotoRole } from "../store/ItemsContext";
+import { useItems, type MockItem, type PhotoRole } from "../store/ItemsContext";
 import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
@@ -54,6 +54,20 @@ type AutoMeasureResult = {
   detected: boolean;
 };
 
+function editableItemSignature(item: MockItem): string {
+  return JSON.stringify({
+    mgmtNo: item.mgmtNo,
+    title: item.title,
+    price: item.price,
+    gender: item.gender,
+    category: item.category,
+    size: item.size,
+    condition: item.condition,
+    measurements: item.measurements,
+    description: item.description,
+  });
+}
+
 function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
@@ -94,6 +108,7 @@ export function ItemDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [savedBaseline, setSavedBaseline] = useState<{ itemId: string; signature: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const automaticSquareRefreshRef = useRef<{ squareObjectId: string; requestedAt: number } | null>(null);
   const saving = savingAction !== null;
@@ -101,6 +116,15 @@ export function ItemDetailPage() {
   useEffect(() => {
     loadSquareCategories();
   }, [loadSquareCategories]);
+
+  useEffect(() => {
+    if (!item) {
+      setSavedBaseline(null);
+      return;
+    }
+    setSavedBaseline({ itemId: item.id, signature: editableItemSignature(item) });
+    // 入力中はupdatedAtが変わらず、保存またはSquareから再取得した時だけ基準を更新する。
+  }, [item?.id, item?.updatedAt]);
 
   useEffect(() => {
     const squareObjectId = item?.squareObjectId;
@@ -160,6 +184,13 @@ export function ItemDetailPage() {
     );
   }
   const currentItem = item;
+  const hasUnsavedChanges =
+    savedBaseline?.itemId === currentItem.id &&
+    savedBaseline.signature !== editableItemSignature(currentItem);
+  const hasPendingSquareChanges =
+    currentItem.squareObjectId === null ||
+    hasUnsavedChanges ||
+    squareSyncStatus === "pending";
 
   function showToast(message: string) {
     setToast(message);
@@ -181,7 +212,7 @@ export function ItemDetailPage() {
   }
 
   async function handleSaveDraft() {
-    if (!id || saving || refreshingSquare || mgmtNoConflict) return;
+    if (!id || saving || refreshingSquare || mgmtNoConflict || !hasUnsavedChanges) return;
     setSavingAction("draft");
     setSaveError(null);
     try {
@@ -195,7 +226,7 @@ export function ItemDetailPage() {
   }
 
   async function handleSaveToSquare() {
-    if (!id || saving || refreshingSquare || mgmtNoConflict) return;
+    if (!id || saving || refreshingSquare || mgmtNoConflict || !hasPendingSquareChanges) return;
     setSavingAction("square");
     setSaveError(null);
     try {
@@ -747,7 +778,6 @@ export function ItemDetailPage() {
       {tab === "desc" && (
         <div className="content">
           <div className="description-preview">{buildDescription(item)}</div>
-          <p className="hint">「下書き保存」はSupabaseだけに保存します。「Squareを更新」を押すと、商品名・SKU・価格・説明文をSquareにも反映します。</p>
         </div>
       )}
 
@@ -757,7 +787,7 @@ export function ItemDetailPage() {
           className="btn btn-primary"
           style={{ flex: 1 }}
           onClick={handleSaveDraft}
-          disabled={saving || refreshingSquare || mgmtNoConflict}
+          disabled={saving || refreshingSquare || mgmtNoConflict || !hasUnsavedChanges}
         >
           {savingAction === "draft" ? "保存中…" : "下書き保存"}
         </button>
@@ -766,7 +796,7 @@ export function ItemDetailPage() {
           className="btn"
           style={{ flex: 1 }}
           onClick={handleSaveToSquare}
-          disabled={saving || refreshingSquare || mgmtNoConflict}
+          disabled={saving || refreshingSquare || mgmtNoConflict || !hasPendingSquareChanges}
         >
           {savingAction === "square" ? "反映中…" : item.squareObjectId ? "Squareを更新" : "Squareに登録"}
         </button>

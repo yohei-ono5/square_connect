@@ -10,11 +10,13 @@ import {
   listItemPhotos,
   listItems,
   markItemSquareSynced,
+  refreshActiveItemsFromSquare as refreshStoredActiveItemsFromSquare,
   refreshItemFromSquare as refreshStoredItemFromSquare,
   saveItem as persistItem,
   saveSquareRegistration as persistSquareRegistration,
   syncItemPhotosToSquare as syncStoredPhotosToSquare,
   type StoredPhoto,
+  type SquareListRefreshResult,
   uploadItemPhoto,
 } from "../lib/itemRepository";
 
@@ -49,6 +51,7 @@ type ItemsContextValue = {
   syncPhotosToSquare: (id: string) => Promise<number>;
   addPhoto: (id: string, role: PhotoRole, file: File) => Promise<void>;
   removePhoto: (id: string, photoId: string) => Promise<void>;
+  refreshActiveItemsFromSquare: () => Promise<SquareListRefreshResult>;
   refreshItemFromSquare: (id: string) => Promise<void>;
   markSquareSynced: (id: string) => Promise<void>;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
@@ -225,6 +228,11 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         setItems((prev) =>
           prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)),
         );
+      },
+      refreshActiveItemsFromSquare: async () => {
+        const result = await refreshStoredActiveItemsFromSquare();
+        await reloadItems();
+        return result;
       },
       refreshItemFromSquare: async (id) => {
         const latest = await refreshStoredItemFromSquare(id);

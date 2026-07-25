@@ -513,6 +513,98 @@ describe("POST /api/items/:id/register-to-square", () => {
   });
 });
 
+describe("POST /api/items/sync-active-from-square", () => {
+  it("batch retrieves only active registered item IDs and updates Supabase", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([
+        { square_object_id: "square-item-1" },
+        { square_object_id: "square-item-2" },
+      ]))
+      .mockResolvedValueOnce(squareResponse({
+        objects: [
+          {
+            type: "ITEM",
+            id: "square-item-1",
+            version: 111,
+            item_data: {
+              name: "更新商品 T0111",
+              description: "一括更新した説明",
+              variations: [{
+                type: "ITEM_VARIATION",
+                id: "square-variation-1",
+                item_variation_data: {
+                  sku: "T0111",
+                  price_money: { amount: 5100, currency: "JPY" },
+                },
+              }],
+            },
+          },
+          {
+            type: "ITEM",
+            id: "square-item-2",
+            version: 222,
+            is_deleted: true,
+          },
+        ],
+      }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const response = await app.request(
+      "/api/items/sync-active-from-square",
+      { method: "POST" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      targeted: 2,
+      updated: 1,
+      deleted: 1,
+      missing: 0,
+    });
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id",
+    );
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/catalog/batch-retrieve",
+    );
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
+      object_ids: ["square-item-1", "square-item-2"],
+      include_related_objects: false,
+      include_deleted_objects: true,
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+      mgmt_no: "T0111",
+      title: "更新商品",
+      price: 5100,
+      description: "一括更新した説明",
+      square_variation_id: "square-variation-1",
+      square_version: 111,
+      square_deleted_at: null,
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toMatchObject({
+      square_version: 222,
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body)).square_deleted_at).toEqual(expect.any(String));
+  });
+
+  it("does not contact Square when there are no active registered items", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(squareResponse([]));
+
+    const response = await app.request(
+      "/api/items/sync-active-from-square",
+      { method: "POST" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ targeted: 0, updated: 0, deleted: 0, missing: 0 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("PATCH /api/items/:id/square", () => {
   it("retrieves the latest object and preserves Square-only fields when updating", async () => {
     const fetchSpy = vi
