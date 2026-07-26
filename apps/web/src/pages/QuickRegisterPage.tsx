@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useItems } from "../store/ItemsContext";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
+import {
+  sortCategoriesForRegistration,
+  sortParentCategoriesForRegistration,
+} from "../lib/categorySorting";
 
 export function QuickRegisterPage() {
   const {
@@ -10,6 +14,7 @@ export function QuickRegisterPage() {
     discardItem,
     saveSquareRegistration,
     isMgmtNoTaken,
+    items,
     squareCategories,
     categoriesLoading,
     categoriesError,
@@ -19,12 +24,24 @@ export function QuickRegisterPage() {
   const [mgmtNo, setMgmtNo] = useState("");
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
+  const [parentCategoryName, setParentCategoryName] = useState("");
   const [category, setCategory] = useState("");
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const parentCategories = useMemo(
+    () => sortParentCategoriesForRegistration(squareCategories ?? [], items),
+    [items, squareCategories],
+  );
+  const childCategories = useMemo(
+    () => sortCategoriesForRegistration(
+      (squareCategories ?? []).filter((candidate) => candidate.parentName === parentCategoryName),
+      items,
+    ),
+    [items, parentCategoryName, squareCategories],
+  );
 
   const canSubmit = mgmtNo.trim().length > 0 && title.trim().length > 0 && price.trim().length > 0 && !submitting;
 
@@ -203,18 +220,46 @@ export function QuickRegisterPage() {
           />
         </div>
         <div className="field">
-          <label htmlFor="quick-category">カテゴリ（任意）</label>
+          <label htmlFor="quick-parent-category">大カテゴリ（任意）</label>
           <select
-            id="quick-category"
+            id="quick-parent-category"
             className="select"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            value={parentCategoryName}
+            onChange={(e) => {
+              const nextParentName = e.target.value;
+              setParentCategoryName(nextParentName);
+              setCategory(nextParentName);
+            }}
             disabled={categoriesLoading}
           >
             <option value="">未設定</option>
-            {squareCategories?.map((cat) => (
-              <option key={cat.id} value={cat.name}>
-                {cat.parentName ? `${cat.parentName} > ${cat.name}` : cat.name}
+            {parentCategories.map((parent) => (
+              <option key={parent.id} value={parent.name}>
+                {parent.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="quick-child-category">中カテゴリ（任意）</label>
+          <select
+            id="quick-child-category"
+            className="select"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            disabled={categoriesLoading || !parentCategoryName || childCategories.length === 0}
+          >
+            {!parentCategoryName && <option value="">先に大カテゴリを選択</option>}
+            {parentCategoryName && (
+              <option value={parentCategoryName}>
+                {childCategories.length === 0
+                  ? "中カテゴリなし"
+                  : `指定なし（${parentCategoryName}のみ）`}
+              </option>
+            )}
+            {childCategories.map((child) => (
+              <option key={child.id} value={child.name}>
+                {child.name}
               </option>
             ))}
           </select>
