@@ -291,6 +291,25 @@ h1 {
   margin-bottom: 14px;
 }
 
+.basic-section + .basic-section {
+  border-top: 0.5px solid var(--border);
+  margin-top: 22px;
+  padding-top: 20px;
+}
+
+.basic-section h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.basic-section > .hint {
+  margin: 0 0 16px;
+}
+
+.custom-size-input {
+  margin-top: 8px;
+}
+
 .field label {
   display: block;
   font-size: 12px;

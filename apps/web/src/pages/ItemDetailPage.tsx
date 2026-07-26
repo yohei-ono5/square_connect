@@ -18,6 +18,8 @@ import {
 } from "../lib/categorySorting";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
+const STANDARD_SIZE_OPTIONS = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "FREE"] as const;
+const CUSTOM_SIZE_VALUE = "__custom__";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "basic", label: "基本情報" },
   { key: "photo", label: "写真" },
@@ -114,6 +116,7 @@ export function ItemDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [customSizeSelected, setCustomSizeSelected] = useState(false);
   const [savedBaseline, setSavedBaseline] = useState<{ itemId: string; signature: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const automaticSquareRefreshRef = useRef<{ squareObjectId: string; requestedAt: number } | null>(null);
@@ -165,6 +168,10 @@ export function ItemDetailPage() {
     setSavedBaseline({ itemId: item.id, signature: editableItemSignature(item) });
     // 入力中はupdatedAtが変わらず、保存またはSquareから再取得した時だけ基準を更新する。
   }, [item?.id, item?.updatedAt]);
+
+  useEffect(() => {
+    setCustomSizeSelected(false);
+  }, [item?.id]);
 
   useEffect(() => {
     const squareObjectId = item?.squareObjectId;
@@ -224,6 +231,13 @@ export function ItemDetailPage() {
     );
   }
   const currentItem = item;
+  const sizeSelectValue = customSizeSelected
+    ? CUSTOM_SIZE_VALUE
+    : currentItem.size === null
+      ? ""
+      : STANDARD_SIZE_OPTIONS.includes(currentItem.size as (typeof STANDARD_SIZE_OPTIONS)[number])
+        ? currentItem.size
+        : CUSTOM_SIZE_VALUE;
   const hasUnsavedChanges =
     savedBaseline?.itemId === currentItem.id &&
     savedBaseline.signature !== editableItemSignature(currentItem);
@@ -714,146 +728,177 @@ export function ItemDetailPage() {
 
       {tab === "basic" && (
         <div className="content">
-          <div className="field">
-            <label htmlFor="mgmtNo">商品番号（SKU）</label>
-            <input
-              id="mgmtNo"
-              className="input"
-              inputMode="numeric"
-              value={item.mgmtNo}
-              onChange={(e) => updateItem(id!, { mgmtNo: e.target.value })}
-            />
-            {mgmtNoConflict && (
-              <p className="form-error">この商品番号は他の商品ですでに使われています</p>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="itemTitle">商品名</label>
-            <input
-              id="itemTitle"
-              className="input"
-              value={item.title}
-              onChange={(e) => updateItem(id!, { title: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="gender">対象</label>
-            <select
-              id="gender"
-              className="select"
-              value={item.gender ?? ""}
-              onChange={(e) => updateItem(id!, { gender: (e.target.value || null) as Gender })}
-            >
-              <option value="">未設定</option>
-              {(Object.keys(GENDER_LABELS) as (keyof typeof GENDER_LABELS)[]).map((key) => (
-                <option key={key} value={key}>
-                  {GENDER_LABELS[key]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="parent-category">大カテゴリ</label>
-            <select
-              id="parent-category"
-              className="select"
-              value={selectedParentCategory?.id ?? ""}
-              onChange={(e) => {
-                const parent = parentCategories.find((category) => category.id === e.target.value);
-                updateItem(id!, {
-                  category: parent?.name ?? null,
-                  categoryId: parent?.id ?? null,
-                });
-              }}
-              disabled={categoriesLoading}
-            >
-              <option value="">未設定</option>
-              {parentCategories.map((parent) => (
-                <option key={parent.id} value={parent.id}>
-                  {parent.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="child-category">中カテゴリ</label>
-            <select
-              id="child-category"
-              className="select"
-              value={selectedSquareCategory?.id ?? selectedParentCategory?.id ?? ""}
-              onChange={(e) => {
-                const category = [
-                  selectedParentCategory,
-                  ...childCategories,
-                ].find((candidate) => candidate?.id === e.target.value);
-                if (category) {
-                  updateItem(id!, { category: category.name, categoryId: category.id });
-                }
-              }}
-              disabled={categoriesLoading || !selectedParentCategory || childCategories.length === 0}
-            >
-              {!selectedParentCategory && <option value="">先に大カテゴリを選択</option>}
-              {selectedParentCategory && (
-                <option value={selectedParentCategory.id}>
-                  {childCategories.length === 0
-                    ? "中カテゴリなし"
-                    : `指定なし（${selectedParentCategory.name}のみ）`}
-                </option>
+          <section className="basic-section">
+            <h2>Square連携項目</h2>
+            <p className="hint">Squareの商品情報・価格・カテゴリへ直接反映されます。</p>
+            <div className="field">
+              <label htmlFor="mgmtNo">商品番号（SKU）</label>
+              <input
+                id="mgmtNo"
+                className="input"
+                inputMode="numeric"
+                value={item.mgmtNo}
+                onChange={(e) => updateItem(id!, { mgmtNo: e.target.value })}
+              />
+              {mgmtNoConflict && (
+                <p className="form-error">この商品番号は他の商品ですでに使われています</p>
               )}
-              {childCategories.map((child) => (
-                <option key={child.id} value={child.id}>
-                  {child.name}
-                </option>
-              ))}
-            </select>
-            {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
-            {categoriesError && <p className="form-error">{categoriesError}</p>}
-            {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
-              <p className="hint">Squareにカテゴリが登録されていません</p>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="size">表記サイズ</label>
-            <input
-              id="size"
-              className="input"
-              placeholder="例：XL"
-              value={item.size ?? ""}
-              onChange={(e) => updateItem(id!, { size: e.target.value || null })}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="price">価格（円）</label>
-            <input
-              id="price"
-              className="input"
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={item.price}
-              onChange={(e) => {
-                if (/^\d*$/.test(e.target.value)) {
-                  updateItem(id!, { price: Number(e.target.value) || 0 });
-                }
-              }}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="condition">コンディション</label>
-            <select
-              id="condition"
-              className="select"
-              value={item.condition ?? ""}
-              onChange={(e) => updateItem(id!, { condition: (e.target.value || null) as Condition })}
-            >
-              <option value="">未設定（後で設定）</option>
-              {(Object.keys(CONDITION_LABELS) as (keyof typeof CONDITION_LABELS)[]).map((key) => (
-                <option key={key} value={key}>
-                  {key}：{CONDITION_LABELS[key]}
-                </option>
-              ))}
-            </select>
-          </div>
+            </div>
+            <div className="field">
+              <label htmlFor="itemTitle">商品名</label>
+              <input
+                id="itemTitle"
+                className="input"
+                value={item.title}
+                onChange={(e) => updateItem(id!, { title: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="parent-category">大カテゴリ</label>
+              <select
+                id="parent-category"
+                className="select"
+                value={selectedParentCategory?.id ?? ""}
+                onChange={(e) => {
+                  const parent = parentCategories.find((category) => category.id === e.target.value);
+                  updateItem(id!, {
+                    category: parent?.name ?? null,
+                    categoryId: parent?.id ?? null,
+                  });
+                }}
+                disabled={categoriesLoading}
+              >
+                <option value="">未設定</option>
+                {parentCategories.map((parent) => (
+                  <option key={parent.id} value={parent.id}>
+                    {parent.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="child-category">中カテゴリ</label>
+              <select
+                id="child-category"
+                className="select"
+                value={selectedSquareCategory?.id ?? selectedParentCategory?.id ?? ""}
+                onChange={(e) => {
+                  const category = [
+                    selectedParentCategory,
+                    ...childCategories,
+                  ].find((candidate) => candidate?.id === e.target.value);
+                  if (category) {
+                    updateItem(id!, { category: category.name, categoryId: category.id });
+                  }
+                }}
+                disabled={categoriesLoading || !selectedParentCategory || childCategories.length === 0}
+              >
+                {!selectedParentCategory && <option value="">先に大カテゴリを選択</option>}
+                {selectedParentCategory && (
+                  <option value={selectedParentCategory.id}>
+                    {childCategories.length === 0
+                      ? "中カテゴリなし"
+                      : `指定なし（${selectedParentCategory.name}のみ）`}
+                  </option>
+                )}
+                {childCategories.map((child) => (
+                  <option key={child.id} value={child.id}>
+                    {child.name}
+                  </option>
+                ))}
+              </select>
+              {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
+              {categoriesError && <p className="form-error">{categoriesError}</p>}
+              {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
+                <p className="hint">Squareにカテゴリが登録されていません</p>
+              )}
+            </div>
+            <div className="field">
+              <label htmlFor="price">価格（円）</label>
+              <input
+                id="price"
+                className="input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={item.price}
+                onChange={(e) => {
+                  if (/^\d*$/.test(e.target.value)) {
+                    updateItem(id!, { price: Number(e.target.value) || 0 });
+                  }
+                }}
+              />
+            </div>
+          </section>
+
+          <section className="basic-section">
+            <h2>アプリ管理項目</h2>
+            <p className="hint">
+              Squareの専用項目とは未連携です。表記サイズとコンディションはSquareの商品説明文へ反映されます。
+            </p>
+            <div className="field">
+              <label htmlFor="gender">対象</label>
+              <select
+                id="gender"
+                className="select"
+                value={item.gender ?? ""}
+                onChange={(e) => updateItem(id!, { gender: (e.target.value || null) as Gender })}
+              >
+                <option value="">未設定</option>
+                {(Object.keys(GENDER_LABELS) as (keyof typeof GENDER_LABELS)[]).map((key) => (
+                  <option key={key} value={key}>
+                    {GENDER_LABELS[key]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="size">表記サイズ</label>
+              <select
+                id="size"
+                className="select"
+                value={sizeSelectValue}
+                onChange={(e) => {
+                  const isCustom = e.target.value === CUSTOM_SIZE_VALUE;
+                  setCustomSizeSelected(isCustom);
+                  updateItem(id!, {
+                    size: isCustom ? null : e.target.value || null,
+                  });
+                }}
+              >
+                <option value="">未設定</option>
+                {STANDARD_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+                <option value={CUSTOM_SIZE_VALUE}>その他（自由入力）</option>
+              </select>
+              {sizeSelectValue === CUSTOM_SIZE_VALUE && (
+                <input
+                  className="input custom-size-input"
+                  aria-label="その他の表記サイズ"
+                  placeholder="例：38、W32、Kids 150"
+                  value={item.size ?? ""}
+                  onChange={(e) => updateItem(id!, { size: e.target.value || null })}
+                />
+              )}
+            </div>
+            <div className="field">
+              <label htmlFor="condition">コンディション</label>
+              <select
+                id="condition"
+                className="select"
+                value={item.condition ?? ""}
+                onChange={(e) => updateItem(id!, { condition: (e.target.value || null) as Condition })}
+              >
+                <option value="">未設定（後で設定）</option>
+                {(Object.keys(CONDITION_LABELS) as (keyof typeof CONDITION_LABELS)[]).map((key) => (
+                  <option key={key} value={key}>
+                    {key}：{CONDITION_LABELS[key]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </section>
         </div>
       )}
 

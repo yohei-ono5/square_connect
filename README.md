@@ -106,6 +106,17 @@ Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 - 「Squareを更新」：登録済み商品の商品名・SKU・価格・説明文と未同期写真をSquareへ反映する
 - 「Squareの最新情報を取得」：保存済みの`square_object_id`を直接指定し、Squareの商品名・SKU・価格・説明文をSupabaseと表示中の画面へ反映する
 
+商品詳細の基本情報は、連携範囲が分かるよう画面上で次の2区分に分ける。
+
+- 「Square連携項目」：商品番号（SKU）、商品名、カテゴリ、価格
+- 「アプリ管理項目」：対象、表記サイズ、コンディション
+
+アプリ管理項目はSupabaseへ保存する。表記サイズとコンディションはSquare Catalogの
+専用フィールドには連携せず、生成した商品説明文の一部としてSquareへ反映する。対象は
+現時点ではSquareへ送信しない。表記サイズはXXS〜XXXL、FREEのプルダウンを基本とし、
+「その他」では38、W32、Kids 150など任意の表記を入力できる。既存の任意サイズも失わず
+そのまま表示・編集する。
+
 新規登録画面のカテゴリは任意項目とし、Workerの
 `GET /api/square/categories`を通してSquare Catalog APIから取得する。
 選択欄は「大カテゴリ」「中カテゴリ」の連動する2段階プルダウンとし、大カテゴリを
