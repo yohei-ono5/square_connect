@@ -26,6 +26,7 @@ export function QuickRegisterPage() {
   const [price, setPrice] = useState("");
   const [parentCategoryName, setParentCategoryName] = useState("");
   const [category, setCategory] = useState("");
+  const [categoryId, setCategoryId] = useState("");
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -116,6 +117,7 @@ export function QuickRegisterPage() {
           mgmtNo: item.mgmtNo,
           title: item.title,
           price: item.price,
+          categoryId: categoryId || undefined,
           hasPhotos: photoFile !== null,
         }),
       });
@@ -227,8 +229,10 @@ export function QuickRegisterPage() {
             value={parentCategoryName}
             onChange={(e) => {
               const nextParentName = e.target.value;
+              const nextParent = parentCategories.find((parent) => parent.name === nextParentName);
               setParentCategoryName(nextParentName);
               setCategory(nextParentName);
+              setCategoryId(nextParent?.id ?? "");
             }}
             disabled={categoriesLoading}
           >
@@ -245,20 +249,28 @@ export function QuickRegisterPage() {
           <select
             id="quick-child-category"
             className="select"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            value={categoryId}
+            onChange={(e) => {
+              const nextCategoryId = e.target.value;
+              const nextCategory = [
+                parentCategories.find((parent) => parent.name === parentCategoryName),
+                ...childCategories,
+              ].find((candidate) => candidate?.id === nextCategoryId);
+              setCategoryId(nextCategoryId);
+              if (nextCategory) setCategory(nextCategory.name);
+            }}
             disabled={categoriesLoading || !parentCategoryName || childCategories.length === 0}
           >
             {!parentCategoryName && <option value="">先に大カテゴリを選択</option>}
             {parentCategoryName && (
-              <option value={parentCategoryName}>
+              <option value={parentCategories.find((parent) => parent.name === parentCategoryName)?.id ?? ""}>
                 {childCategories.length === 0
                   ? "中カテゴリなし"
                   : `指定なし（${parentCategoryName}のみ）`}
               </option>
             )}
             {childCategories.map((child) => (
-              <option key={child.id} value={child.name}>
+              <option key={child.id} value={child.id}>
                 {child.name}
               </option>
             ))}

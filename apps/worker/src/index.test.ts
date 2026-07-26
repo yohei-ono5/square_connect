@@ -260,7 +260,12 @@ describe("POST /api/items/:id/register-to-square", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mgmtNo: "T0002", title: "ディズニー Tシャツ", price: 3000 }),
+        body: JSON.stringify({
+          mgmtNo: "T0002",
+          title: "ディズニー Tシャツ",
+          price: 3000,
+          categoryId: "square-category-tops",
+        }),
       },
       env,
     );
@@ -287,6 +292,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         present_at_all_locations: true,
         item_data: {
           name: "ディズニー Tシャツ T0002",
+          categories: [{ id: "square-category-tops" }],
           variations: [
             {
               present_at_all_locations: true,
@@ -435,6 +441,8 @@ describe("POST /api/items/:id/register-to-square", () => {
       squareObjectId: "square-item-1",
       squareVariationId: "square-variation-1",
     });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).object.item_data)
+      .not.toHaveProperty("categories");
     expect(r2Get).toHaveBeenCalledWith(storagePath);
     expect(fetchSpy.mock.calls[3][0]).toBe("https://connect.squareupsandbox.com/v2/catalog/images");
     const imageForm = fetchSpy.mock.calls[3][1]?.body as FormData;

@@ -60,6 +60,7 @@ export const RegisterToSquareInputSchema = z
     mgmtNo: z.string().trim().min(1).max(100),
     title: z.string().trim().min(1).max(512),
     price: z.number().int().nonnegative().safe(),
+    categoryId: z.string().trim().min(1).max(255).optional(),
     hasPhotos: z.boolean().optional().default(false),
   })
   .refine(({ title, mgmtNo }) => `${title} ${mgmtNo}`.length <= 512, {

@@ -267,6 +267,7 @@ export async function registerItemInSquare(
           item_data: {
             name: buildTitle(input),
             product_type: "REGULAR",
+            ...(input.categoryId ? { categories: [{ id: input.categoryId }] } : {}),
             variations: [
               {
                 type: "ITEM_VARIATION",
