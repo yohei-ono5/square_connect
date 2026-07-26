@@ -120,6 +120,9 @@ export function QuickRegisterPage() {
           title: item.title,
           price: item.price,
           categoryId: categoryId || undefined,
+          reportingCategoryId: parentCategories.find(
+            (parent) => parent.name === parentCategoryName,
+          )?.id,
           hasPhotos: photoFile !== null,
         }),
       });

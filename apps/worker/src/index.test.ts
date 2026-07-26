@@ -264,7 +264,8 @@ describe("POST /api/items/:id/register-to-square", () => {
           mgmtNo: "T0002",
           title: "ディズニー Tシャツ",
           price: 3000,
-          categoryId: "square-category-tops",
+          categoryId: "square-category-tshirt",
+          reportingCategoryId: "square-category-tops",
         }),
       },
       env,
@@ -292,7 +293,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         present_at_all_locations: true,
         item_data: {
           name: "ディズニー Tシャツ T0002",
-          categories: [{ id: "square-category-tops" }],
+          categories: [{ id: "square-category-tshirt" }],
           reporting_category: { id: "square-category-tops" },
           variations: [
             {
@@ -320,7 +321,10 @@ describe("POST /api/items/:id/register-to-square", () => {
           item_data: {
             name: "更新後の商品 T0100",
             description: "Squareで更新した説明",
-            categories: [{ id: "square-category-tops" }],
+            categories: [
+              { id: "square-category-tops" },
+              { id: "square-category-tshirt" },
+            ],
             reporting_category: { id: "square-category-tops" },
             variations: [{
               type: "ITEM_VARIATION",
@@ -351,7 +355,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         title: "更新後の商品",
         price: 4500,
         description: "Squareで更新した説明",
-        categoryId: "square-category-tops",
+        categoryId: "square-category-tshirt",
       },
     });
     expect(fetchSpy.mock.calls[1][0]).toBe(
@@ -363,7 +367,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       title: "更新後の商品",
       price: 4500,
       description: "Squareで更新した説明",
-      square_category_id: "square-category-tops",
+      square_category_id: "square-category-tshirt",
       square_variation_id: "square-variation-1",
       square_version: 123,
       square_deleted_at: null,
@@ -744,7 +748,8 @@ describe("PATCH /api/items/:id/square", () => {
           mgmtNo: "T0002",
           title: "更新商品",
           price: 3500,
-          categoryId: "square-category-pants",
+          categoryId: "square-category-chino",
+          reportingCategoryId: "square-category-pants",
           description: "更新説明",
         }),
       },
@@ -768,7 +773,7 @@ describe("PATCH /api/items/:id/square", () => {
           name: "更新商品 T0002",
           description: "更新説明",
           abbreviation: "OLD",
-          categories: [{ id: "square-category-pants" }],
+          categories: [{ id: "square-category-chino" }],
           reporting_category: { id: "square-category-pants" },
           variations: [
             {
@@ -900,9 +905,9 @@ describe("GET /api/square/categories", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       categories: [
-        { id: "cat-parent", name: "Tシャツ", parentName: null },
-        { id: "cat-child", name: "アニメTシャツ", parentName: "Tシャツ" },
-        { id: "cat-other", name: "バンドT", parentName: null },
+        { id: "cat-parent", name: "Tシャツ", parentId: null, parentName: null },
+        { id: "cat-child", name: "アニメTシャツ", parentId: "cat-parent", parentName: "Tシャツ" },
+        { id: "cat-other", name: "バンドT", parentId: null, parentName: null },
       ],
     });
     expect(fetchSpy).toHaveBeenCalledTimes(2);

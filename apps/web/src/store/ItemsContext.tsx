@@ -40,8 +40,13 @@ export type QuickRegisterInput = {
   photoFile?: File;
 };
 
-// Square側で設定済みのカテゴリ（parentNameは親カテゴリがある場合のみ、表示用に「親 > 子」を組み立てる）。
-export type SquareCategory = { id: string; name: string; parentName: string | null };
+// Square側で設定済みのカテゴリ。中カテゴリは親カテゴリのIDと名前を保持する。
+export type SquareCategory = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  parentName: string | null;
+};
 
 type ItemsContextValue = {
   items: MockItem[];

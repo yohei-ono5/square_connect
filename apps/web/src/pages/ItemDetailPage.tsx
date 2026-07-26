@@ -281,6 +281,7 @@ export function ItemDetailPage() {
             title: currentItem.title,
             price: currentItem.price,
             categoryId: currentItem.categoryId,
+            reportingCategoryId: selectedParentCategory?.id ?? null,
             description: buildDescription(currentItem),
           }),
         });
@@ -298,6 +299,7 @@ export function ItemDetailPage() {
             title: currentItem.title,
             price: currentItem.price,
             categoryId: currentItem.categoryId,
+            reportingCategoryId: selectedParentCategory?.id ?? null,
             hasPhotos: currentItem.photos.length > 0,
           }),
         });

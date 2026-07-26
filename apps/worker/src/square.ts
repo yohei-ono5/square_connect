@@ -272,7 +272,9 @@ export async function registerItemInSquare(
             ...(input.categoryId
               ? {
                   categories: [{ id: input.categoryId }],
-                  reporting_category: { id: input.categoryId },
+                  reporting_category: {
+                    id: input.reportingCategoryId ?? input.categoryId,
+                  },
                 }
               : {}),
             variations: [
@@ -370,7 +372,9 @@ export async function updateItemInSquare(
   if (input.categoryId !== undefined) {
     updatedItemData.categories = input.categoryId ? [{ id: input.categoryId }] : [];
     if (input.categoryId) {
-      updatedItemData.reporting_category = { id: input.categoryId };
+      updatedItemData.reporting_category = {
+        id: input.reportingCategoryId ?? input.categoryId,
+      };
     } else {
       delete updatedItemData.reporting_category;
     }
@@ -428,6 +432,11 @@ function catalogItemToSnapshot(item: CatalogItemObject): SquareItemSnapshot | nu
     ? squareName.slice(0, -suffix.length)
     : squareName;
 
+  const reportingCategoryId = item.item_data?.reporting_category?.id;
+  const categoryId = item.item_data?.categories
+    ?.find((category) => category.id && category.id !== reportingCategoryId)
+    ?.id ?? reportingCategoryId ?? item.item_data?.categories?.[0]?.id;
+
   return {
     squareObjectId: item.id,
     squareVariationId: variation?.id,
@@ -437,7 +446,7 @@ function catalogItemToSnapshot(item: CatalogItemObject): SquareItemSnapshot | nu
     title,
     price: variationData?.price_money?.amount,
     description: item.item_data?.description,
-    categoryId: item.item_data?.reporting_category?.id ?? item.item_data?.categories?.[0]?.id,
+    categoryId,
   };
 }
 
@@ -530,7 +539,12 @@ type ListCatalogResponse = {
   errors?: SquareError[];
 };
 
-export type SquareCategory = { id: string; name: string; parentName: string | null };
+export type SquareCategory = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  parentName: string | null;
+};
 
 // カテゴリはSquareのダッシュボードで設定済みのものを取得するだけで、アプリからは作成しない。
 // 階層（parent_category）がある場合は表示用に親カテゴリ名を添える。
@@ -567,6 +581,7 @@ export async function listSquareCategories(
       return {
         id: obj.id,
         name: obj.category_data.name,
+        parentId: parentId ?? null,
         parentName: parentId ? (nameById.get(parentId) ?? null) : null,
       };
     })

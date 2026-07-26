@@ -111,9 +111,10 @@ Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 選択欄は「大カテゴリ」「中カテゴリ」の連動する2段階プルダウンとし、大カテゴリを
 選ぶとその配下だけを中カテゴリへ表示する。中カテゴリは任意で、大カテゴリだけ、または
 カテゴリ未設定のままでも下書き保存・Square登録ができる。選択したカテゴリ名は
-Supabaseの`items.category`へ保存し、選択したSquareカテゴリIDは商品登録APIへ渡して
-`CatalogItem.categories`と`CatalogItem.reporting_category`へ設定する。大カテゴリのみの場合は
-大カテゴリID、中カテゴリを選んだ場合は中カテゴリIDを使用する。カテゴリIDは
+Supabaseの`items.category`へ保存し、選択したSquareカテゴリIDは商品登録APIへ渡す。
+大カテゴリのみの場合は`CatalogItem.categories`と`reporting_category`の両方へ大カテゴリIDを
+設定する。中カテゴリを選んだ場合は`categories`へ中カテゴリID、`reporting_category`へ
+大カテゴリIDを設定し、Squareの商品画面でも分類とレポートカテゴリを分けて表示する。カテゴリIDは
 `items.square_category_id`にも保存し、商品詳細画面での下書き保存・Square登録・Square更新でも
 同じ2段階選択とIDを再利用する。カテゴリ一覧は画面セッション中に1回だけ取得して再利用する。
 
