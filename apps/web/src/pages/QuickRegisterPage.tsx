@@ -5,11 +5,21 @@ import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 
 export function QuickRegisterPage() {
-  const { addItem, discardItem, saveSquareRegistration, isMgmtNoTaken } = useItems();
+  const {
+    addItem,
+    discardItem,
+    saveSquareRegistration,
+    isMgmtNoTaken,
+    squareCategories,
+    categoriesLoading,
+    categoriesError,
+    loadSquareCategories,
+  } = useItems();
   const navigate = useNavigate();
   const [mgmtNo, setMgmtNo] = useState("");
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
+  const [category, setCategory] = useState("");
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -21,6 +31,10 @@ export function QuickRegisterPage() {
   useEffect(() => () => {
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
   }, [photoPreviewUrl]);
+
+  useEffect(() => {
+    loadSquareCategories();
+  }, [loadSquareCategories]);
 
   // Square側の重複チェック（Square検索）とは別に、まだSquareに送っていない下書き同士の
   // SKU衝突もここで先に防ぐ。
@@ -46,6 +60,7 @@ export function QuickRegisterPage() {
         mgmtNo: mgmtNo.trim(),
         title: title.trim(),
         price: Number(price),
+        category: category || null,
         photoFile: photoFile ?? undefined,
       });
       navigate("/", { state: { notice: "下書きに保存しました", noticeType: "success" } });
@@ -73,6 +88,7 @@ export function QuickRegisterPage() {
         mgmtNo: mgmtNo.trim(),
         title: title.trim(),
         price: Number(price),
+        category: category || null,
         photoFile: photoFile ?? undefined,
       });
       temporaryItemId = item.id;
@@ -187,6 +203,28 @@ export function QuickRegisterPage() {
           />
         </div>
         <div className="field">
+          <label htmlFor="quick-category">カテゴリ（任意）</label>
+          <select
+            id="quick-category"
+            className="select"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            disabled={categoriesLoading}
+          >
+            <option value="">未設定</option>
+            {squareCategories?.map((cat) => (
+              <option key={cat.id} value={cat.name}>
+                {cat.parentName ? `${cat.parentName} > ${cat.name}` : cat.name}
+              </option>
+            ))}
+          </select>
+          {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
+          {categoriesError && <p className="form-error">{categoriesError}</p>}
+          {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
+            <p className="hint">Squareにカテゴリが登録されていません</p>
+          )}
+        </div>
+        <div className="field">
           <label htmlFor="quick-photo">写真（任意）</label>
           <input
             id="quick-photo"
@@ -225,7 +263,7 @@ export function QuickRegisterPage() {
         </div>
         {errorMessage && <p className="form-error">{errorMessage}</p>}
         <p className="hint">
-          写真はJPEG・PJPEG・PNG・GIF（15MB以下）に対応しています。対象（メンズ/レディース/ユニセックス）・カテゴリ・サイズ・採寸・コンディションはあとから商品詳細編集画面で追加できます。
+          写真はJPEG・PJPEG・PNG・GIF（15MB以下）に対応しています。対象（メンズ/レディース/ユニセックス）・サイズ・採寸・コンディションはあとから商品詳細編集画面で追加できます。
         </p>
       </form>
     </div>

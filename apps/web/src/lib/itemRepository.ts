@@ -258,6 +258,7 @@ export async function createItem(input: {
   mgmtNo: string;
   title: string;
   price: number;
+  category?: string | null;
 }): Promise<Item> {
   const storeId = await getDefaultStoreId();
   const result = await getSupabase()
@@ -268,6 +269,7 @@ export async function createItem(input: {
       mgmt_no: input.mgmtNo,
       title: input.title,
       price: input.price,
+      category: input.category ?? null,
     })
     .select(ITEM_COLUMNS)
     .single();

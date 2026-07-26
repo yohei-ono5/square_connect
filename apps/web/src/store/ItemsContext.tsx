@@ -31,7 +31,13 @@ export type MockPhoto = StoredPhoto;
 export type MockItem = Item & { photos: MockPhoto[]; measurePoints?: MeasurePoints };
 
 // 管理番号（SKU）はスタッフの手入力。共有カウンタでの自動採番はやめた。
-export type QuickRegisterInput = { mgmtNo: string; title: string; price: number; photoFile?: File };
+export type QuickRegisterInput = {
+  mgmtNo: string;
+  title: string;
+  price: number;
+  category?: string | null;
+  photoFile?: File;
+};
 
 // Square側で設定済みのカテゴリ（parentNameは親カテゴリがある場合のみ、表示用に「親 > 子」を組み立てる）。
 export type SquareCategory = { id: string; name: string; parentName: string | null };
@@ -136,6 +142,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           mgmtNo: input.mgmtNo.trim(),
           title: input.title.trim(),
           price: input.price,
+          category: input.category ?? null,
         });
         let item: MockItem = {
           ...storedItem,

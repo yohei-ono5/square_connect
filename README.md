@@ -106,6 +106,12 @@ Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 - 「Squareを更新」：登録済み商品の商品名・SKU・価格・説明文と未同期写真をSquareへ反映する
 - 「Squareの最新情報を取得」：保存済みの`square_object_id`を直接指定し、Squareの商品名・SKU・価格・説明文をSupabaseと表示中の画面へ反映する
 
+新規登録画面のカテゴリは任意項目とし、Workerの
+`GET /api/square/categories`を通してSquare Catalog APIから取得する。
+選択肢はプルダウンで表示し、親カテゴリがある場合は「親 > 子」と表示する。
+未選択のままでも下書き保存・Square登録ができ、選択したカテゴリ名は
+Supabaseの`items.category`へ保存する。カテゴリ一覧は画面セッション中に1回だけ取得して再利用する。
+
 最新情報取得はSKU検索ではなく、対象商品のSquare IDを直接使うため、別商品を誤って取り込まない。
 
 Square側の変更は`catalog.version.updated` Webhookを
