@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { CONDITION_LABELS, GENDER_LABELS, buildDescription, type Condition, type Gender } from "@square-connect/shared";
 import {
@@ -12,6 +12,10 @@ import { useItems, type MockItem, type PhotoRole } from "../store/ItemsContext";
 import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
+import {
+  sortCategoriesForRegistration,
+  sortParentCategoriesForRegistration,
+} from "../lib/categorySorting";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
 const TABS: { key: TabKey; label: string }[] = [
@@ -61,6 +65,7 @@ function editableItemSignature(item: MockItem): string {
     price: item.price,
     gender: item.gender,
     category: item.category,
+    categoryId: item.categoryId,
     size: item.size,
     condition: item.condition,
     measurements: item.measurements,
@@ -89,6 +94,7 @@ export function ItemDetailPage() {
     addPhoto,
     removePhoto,
     isMgmtNoTaken,
+    items,
     squareCategories,
     categoriesLoading,
     categoriesError,
@@ -112,10 +118,44 @@ export function ItemDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const automaticSquareRefreshRef = useRef<{ squareObjectId: string; requestedAt: number } | null>(null);
   const saving = savingAction !== null;
+  const parentCategories = useMemo(
+    () => sortParentCategoriesForRegistration(squareCategories ?? [], items),
+    [items, squareCategories],
+  );
+  const selectedSquareCategory = useMemo(() => {
+    if (!item || !squareCategories) return undefined;
+    if (item.categoryId) {
+      return squareCategories.find((category) => category.id === item.categoryId);
+    }
+    if (!item.category) return undefined;
+    const nameMatches = squareCategories.filter((category) => category.name === item.category);
+    return nameMatches.length === 1 ? nameMatches[0] : undefined;
+  }, [item?.category, item?.categoryId, squareCategories]);
+  const selectedParentCategory = useMemo(() => {
+    if (!selectedSquareCategory) return undefined;
+    const parentName = selectedSquareCategory.parentName ?? selectedSquareCategory.name;
+    return parentCategories.find((category) => category.name === parentName);
+  }, [parentCategories, selectedSquareCategory]);
+  const childCategories = useMemo(
+    () => sortCategoriesForRegistration(
+      (squareCategories ?? []).filter(
+        (category) => category.parentName === selectedParentCategory?.name,
+      ),
+      items,
+    ),
+    [items, selectedParentCategory?.name, squareCategories],
+  );
 
   useEffect(() => {
     loadSquareCategories();
   }, [loadSquareCategories]);
+
+  // 旧データはカテゴリ名だけを保持している。名前が一意にSquareカテゴリへ
+  // 対応するときだけIDを補完し、「その他」のような同名カテゴリは自動推測しない。
+  useEffect(() => {
+    if (!id || !item || item.categoryId || !selectedSquareCategory) return;
+    updateItem(id, { categoryId: selectedSquareCategory.id });
+  }, [id, item, selectedSquareCategory, updateItem]);
 
   useEffect(() => {
     if (!item) {
@@ -240,6 +280,7 @@ export function ItemDetailPage() {
             mgmtNo: currentItem.mgmtNo,
             title: currentItem.title,
             price: currentItem.price,
+            categoryId: currentItem.categoryId,
             description: buildDescription(currentItem),
           }),
         });
@@ -256,6 +297,7 @@ export function ItemDetailPage() {
             mgmtNo: currentItem.mgmtNo,
             title: currentItem.title,
             price: currentItem.price,
+            categoryId: currentItem.categoryId,
             hasPhotos: currentItem.photos.length > 0,
           }),
         });
@@ -709,18 +751,56 @@ export function ItemDetailPage() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="category">カテゴリ</label>
+            <label htmlFor="parent-category">大カテゴリ</label>
             <select
-              id="category"
+              id="parent-category"
               className="select"
-              value={item.category ?? ""}
-              onChange={(e) => updateItem(id!, { category: e.target.value || null })}
+              value={selectedParentCategory?.id ?? ""}
+              onChange={(e) => {
+                const parent = parentCategories.find((category) => category.id === e.target.value);
+                updateItem(id!, {
+                  category: parent?.name ?? null,
+                  categoryId: parent?.id ?? null,
+                });
+              }}
               disabled={categoriesLoading}
             >
               <option value="">未設定</option>
-              {squareCategories?.map((cat) => (
-                <option key={cat.id} value={cat.name}>
-                  {cat.parentName ? `${cat.parentName} > ${cat.name}` : cat.name}
+              {parentCategories.map((parent) => (
+                <option key={parent.id} value={parent.id}>
+                  {parent.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="child-category">中カテゴリ</label>
+            <select
+              id="child-category"
+              className="select"
+              value={selectedSquareCategory?.id ?? selectedParentCategory?.id ?? ""}
+              onChange={(e) => {
+                const category = [
+                  selectedParentCategory,
+                  ...childCategories,
+                ].find((candidate) => candidate?.id === e.target.value);
+                if (category) {
+                  updateItem(id!, { category: category.name, categoryId: category.id });
+                }
+              }}
+              disabled={categoriesLoading || !selectedParentCategory || childCategories.length === 0}
+            >
+              {!selectedParentCategory && <option value="">先に大カテゴリを選択</option>}
+              {selectedParentCategory && (
+                <option value={selectedParentCategory.id}>
+                  {childCategories.length === 0
+                    ? "中カテゴリなし"
+                    : `指定なし（${selectedParentCategory.name}のみ）`}
+                </option>
+              )}
+              {childCategories.map((child) => (
+                <option key={child.id} value={child.id}>
+                  {child.name}
                 </option>
               ))}
             </select>

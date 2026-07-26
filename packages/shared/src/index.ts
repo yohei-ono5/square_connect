@@ -28,6 +28,7 @@ export const ItemSchema = z.object({
   price: z.number().int().nonnegative(),
   gender: GenderSchema,
   category: z.string().nullable(),
+  categoryId: z.string().nullable(),
   size: z.string().nullable(),
   condition: ConditionSchema,
   measurements: z
@@ -60,7 +61,7 @@ export const RegisterToSquareInputSchema = z
     mgmtNo: z.string().trim().min(1).max(100),
     title: z.string().trim().min(1).max(512),
     price: z.number().int().nonnegative().safe(),
-    categoryId: z.string().trim().min(1).max(255).optional(),
+    categoryId: z.string().trim().min(1).max(255).nullable().optional(),
     hasPhotos: z.boolean().optional().default(false),
   })
   .refine(({ title, mgmtNo }) => `${title} ${mgmtNo}`.length <= 512, {

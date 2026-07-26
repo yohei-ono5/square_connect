@@ -36,6 +36,7 @@ export type QuickRegisterInput = {
   title: string;
   price: number;
   category?: string | null;
+  categoryId?: string | null;
   photoFile?: File;
 };
 
@@ -143,6 +144,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           title: input.title.trim(),
           price: input.price,
           category: input.category ?? null,
+          categoryId: input.categoryId ?? null,
         });
         let item: MockItem = {
           ...storedItem,
@@ -254,6 +256,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
             ...(latest.title !== undefined ? { title: latest.title } : {}),
             ...(latest.price !== undefined ? { price: latest.price } : {}),
             description: latest.description,
+            categoryId: latest.categoryId,
             updatedAt: latest.syncedAt,
             squareSyncedAt: latest.syncedAt,
             squareDeletedAt: null,

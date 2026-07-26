@@ -12,6 +12,7 @@ function item(overrides: Partial<MockItem> = {}): MockItem {
     price: 3000,
     gender: null,
     category: null,
+    categoryId: null,
     size: null,
     condition: null,
     measurements: null,

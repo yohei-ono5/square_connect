@@ -79,6 +79,7 @@ export function QuickRegisterPage() {
         title: title.trim(),
         price: Number(price),
         category: category || null,
+        categoryId: categoryId || null,
         photoFile: photoFile ?? undefined,
       });
       navigate("/", { state: { notice: "下書きに保存しました", noticeType: "success" } });
@@ -107,6 +108,7 @@ export function QuickRegisterPage() {
         title: title.trim(),
         price: Number(price),
         category: category || null,
+        categoryId: categoryId || null,
         photoFile: photoFile ?? undefined,
       });
       temporaryItemId = item.id;

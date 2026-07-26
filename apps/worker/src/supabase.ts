@@ -33,13 +33,14 @@ export type ActiveSquareItem = {
   title: string;
   price: number;
   description: string | null;
+  square_category_id: string | null;
   square_deleted_at: string | null;
 };
 
 export async function listActiveSquareItems(config: SupabaseConfig): Promise<ActiveSquareItem[]> {
   const response = await supabaseRequest(
     config,
-    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_deleted_at",
+    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_category_id,square_deleted_at",
   );
   const rows = (await response.json()) as Array<ActiveSquareItem & { square_object_id: string | null }>;
   const items = new Map<string, ActiveSquareItem>();
@@ -160,6 +161,7 @@ export type SquareItemPatch = {
   title?: string;
   price?: number;
   description?: string | null;
+  square_category_id?: string | null;
   square_variation_id?: string;
   square_version?: number;
   square_synced_at: string;

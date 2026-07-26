@@ -32,6 +32,7 @@ type ItemRow = {
   price: number;
   gender: Gender;
   category: string | null;
+  square_category_id: string | null;
   size: string | null;
   condition: Condition;
   m_shoulder: number | null;
@@ -54,6 +55,7 @@ const ITEM_COLUMNS = [
   "price",
   "gender",
   "category",
+  "square_category_id",
   "size",
   "condition",
   "m_shoulder",
@@ -81,6 +83,7 @@ function rowToItem(row: ItemRow): Item {
     price: row.price,
     gender: row.gender,
     category: row.category,
+    categoryId: row.square_category_id,
     size: row.size,
     condition: row.condition,
     measurements: hasMeasurements
@@ -206,6 +209,7 @@ export type SquareItemRefresh = {
   title?: string;
   price?: number;
   description: string | null;
+  categoryId: string | null;
   syncedAt: string;
 };
 
@@ -259,6 +263,7 @@ export async function createItem(input: {
   title: string;
   price: number;
   category?: string | null;
+  categoryId?: string | null;
 }): Promise<Item> {
   const storeId = await getDefaultStoreId();
   const result = await getSupabase()
@@ -270,6 +275,7 @@ export async function createItem(input: {
       title: input.title,
       price: input.price,
       category: input.category ?? null,
+      square_category_id: input.categoryId ?? null,
     })
     .select(ITEM_COLUMNS)
     .single();
@@ -288,6 +294,7 @@ export async function saveItem(item: Item): Promise<string> {
       price: item.price,
       gender: item.gender,
       category: item.category,
+      square_category_id: item.categoryId,
       size: item.size,
       condition: item.condition,
       m_shoulder: item.measurements?.shoulderCm ?? null,

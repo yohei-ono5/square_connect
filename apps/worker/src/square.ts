@@ -63,6 +63,8 @@ type CatalogItemObject = {
   item_data?: {
     name?: string;
     description?: string;
+    categories?: Array<{ id?: string; ordinal?: number }>;
+    reporting_category?: { id?: string; ordinal?: number };
     variations?: CatalogVariationObject[];
     [key: string]: unknown;
   };
@@ -267,7 +269,12 @@ export async function registerItemInSquare(
           item_data: {
             name: buildTitle(input),
             product_type: "REGULAR",
-            ...(input.categoryId ? { categories: [{ id: input.categoryId }] } : {}),
+            ...(input.categoryId
+              ? {
+                  categories: [{ id: input.categoryId }],
+                  reporting_category: { id: input.categoryId },
+                }
+              : {}),
             variations: [
               {
                 type: "ITEM_VARIATION",
@@ -354,14 +361,24 @@ export async function updateItemInSquare(
   const updatedVariations = [...variations];
   updatedVariations[variationIndex] = updatedVariation;
 
+  const updatedItemData = {
+    ...item.item_data,
+    name: buildTitle(input),
+    description: input.description ?? "",
+    variations: updatedVariations,
+  };
+  if (input.categoryId !== undefined) {
+    updatedItemData.categories = input.categoryId ? [{ id: input.categoryId }] : [];
+    if (input.categoryId) {
+      updatedItemData.reporting_category = { id: input.categoryId };
+    } else {
+      delete updatedItemData.reporting_category;
+    }
+  }
+
   const updatedItem: CatalogItemObject = {
     ...item,
-    item_data: {
-      ...item.item_data,
-      name: buildTitle(input),
-      description: input.description ?? "",
-      variations: updatedVariations,
-    },
+    item_data: updatedItemData,
   };
 
   const upsert = await squareRequest<UpsertCatalogResponse>(
@@ -391,6 +408,7 @@ export type SquareItemSnapshot = {
   title?: string;
   price?: number;
   description?: string;
+  categoryId?: string;
 };
 
 function catalogItemToSnapshot(item: CatalogItemObject): SquareItemSnapshot | null {
@@ -419,6 +437,7 @@ function catalogItemToSnapshot(item: CatalogItemObject): SquareItemSnapshot | nu
     title,
     price: variationData?.price_money?.amount,
     description: item.item_data?.description,
+    categoryId: item.item_data?.reporting_category?.id ?? item.item_data?.categories?.[0]?.id,
   };
 }
 

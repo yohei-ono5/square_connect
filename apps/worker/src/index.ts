@@ -110,6 +110,7 @@ function squareSnapshotPatch(snapshot: SquareItemSnapshot, syncedAt: string): Sq
     ...(snapshot.title ? { title: snapshot.title } : {}),
     ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
     description: snapshot.description ?? null,
+    square_category_id: snapshot.categoryId ?? null,
     ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
     square_version: snapshot.version,
     square_synced_at: syncedAt,
@@ -145,6 +146,7 @@ function hasSquareSnapshotChanged(item: ActiveSquareItem, snapshot: SquareItemSn
     || (snapshot.title !== undefined && snapshot.title !== item.title)
     || (snapshot.price !== undefined && snapshot.price !== item.price)
     || (snapshot.description ?? null) !== item.description
+    || (snapshot.categoryId ?? null) !== (item.square_category_id ?? null)
     || (snapshot.squareVariationId !== undefined
       && snapshot.squareVariationId !== item.square_variation_id)
   );
@@ -608,6 +610,7 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
           ...(snapshot.title ? { title: snapshot.title } : {}),
           ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
           description: snapshot.description ?? null,
+          square_category_id: snapshot.categoryId ?? null,
           ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
           square_version: snapshot.version,
           square_synced_at: syncedAt,
@@ -623,6 +626,7 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
         ...(snapshot.title ? { title: snapshot.title } : {}),
         ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
         description: snapshot.description ?? null,
+        categoryId: snapshot.categoryId ?? null,
       },
       syncedAt,
     });

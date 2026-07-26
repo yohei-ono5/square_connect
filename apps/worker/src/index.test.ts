@@ -293,6 +293,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         item_data: {
           name: "ディズニー Tシャツ T0002",
           categories: [{ id: "square-category-tops" }],
+          reporting_category: { id: "square-category-tops" },
           variations: [
             {
               present_at_all_locations: true,
@@ -319,6 +320,8 @@ describe("POST /api/items/:id/register-to-square", () => {
           item_data: {
             name: "更新後の商品 T0100",
             description: "Squareで更新した説明",
+            categories: [{ id: "square-category-tops" }],
+            reporting_category: { id: "square-category-tops" },
             variations: [{
               type: "ITEM_VARIATION",
               id: "square-variation-1",
@@ -348,6 +351,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         title: "更新後の商品",
         price: 4500,
         description: "Squareで更新した説明",
+        categoryId: "square-category-tops",
       },
     });
     expect(fetchSpy.mock.calls[1][0]).toBe(
@@ -359,6 +363,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       title: "更新後の商品",
       price: 4500,
       description: "Squareで更新した説明",
+      square_category_id: "square-category-tops",
       square_variation_id: "square-variation-1",
       square_version: 123,
       square_deleted_at: null,
@@ -443,6 +448,8 @@ describe("POST /api/items/:id/register-to-square", () => {
     });
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).object.item_data)
       .not.toHaveProperty("categories");
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).object.item_data)
+      .not.toHaveProperty("reporting_category");
     expect(r2Get).toHaveBeenCalledWith(storagePath);
     expect(fetchSpy.mock.calls[3][0]).toBe("https://connect.squareupsandbox.com/v2/catalog/images");
     const imageForm = fetchSpy.mock.calls[3][1]?.body as FormData;
@@ -590,7 +597,7 @@ describe("POST /api/items/sync-active-from-square", () => {
       missing: 0,
     });
     expect(fetchSpy.mock.calls[0][0]).toBe(
-      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_deleted_at",
+      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_category_id,square_deleted_at",
     );
     expect(fetchSpy.mock.calls[1][0]).toBe(
       "https://connect.squareupsandbox.com/v2/catalog/batch-retrieve",
@@ -737,6 +744,7 @@ describe("PATCH /api/items/:id/square", () => {
           mgmtNo: "T0002",
           title: "更新商品",
           price: 3500,
+          categoryId: "square-category-pants",
           description: "更新説明",
         }),
       },
@@ -760,6 +768,8 @@ describe("PATCH /api/items/:id/square", () => {
           name: "更新商品 T0002",
           description: "更新説明",
           abbreviation: "OLD",
+          categories: [{ id: "square-category-pants" }],
+          reporting_category: { id: "square-category-pants" },
           variations: [
             {
               id: "square-variation-1",

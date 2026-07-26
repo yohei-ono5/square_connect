@@ -112,8 +112,12 @@ Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 選ぶとその配下だけを中カテゴリへ表示する。中カテゴリは任意で、大カテゴリだけ、または
 カテゴリ未設定のままでも下書き保存・Square登録ができる。選択したカテゴリ名は
 Supabaseの`items.category`へ保存し、選択したSquareカテゴリIDは商品登録APIへ渡して
-`CatalogItem.categories`へ設定する。大カテゴリのみの場合は大カテゴリID、中カテゴリを
-選んだ場合は中カテゴリIDを使用する。カテゴリ一覧は画面セッション中に1回だけ取得して再利用する。
+`CatalogItem.categories`と`CatalogItem.reporting_category`へ設定する。大カテゴリのみの場合は
+大カテゴリID、中カテゴリを選んだ場合は中カテゴリIDを使用する。カテゴリIDは
+`items.square_category_id`にも保存し、商品詳細画面での下書き保存・Square登録・Square更新でも
+同じ2段階選択とIDを再利用する。カテゴリ一覧は画面セッション中に1回だけ取得して再利用する。
+
+既存DBには`supabase/migrations/0003_item_square_category.sql`を適用する。
 
 カテゴリの表示順は、ブラウザの現在月（春=3〜5月、夏=6〜8月、秋=9〜11月、冬=12〜2月）
 から判定した季節との相性、商品一覧での利用回数、カテゴリ名の日本語順の順で決める。
@@ -129,7 +133,8 @@ Square側の変更は`catalog.version.updated` Webhookを
 `POST /api/webhooks/square`で受信し、前回同期時刻以降の変更をSupabaseへ反映する。
 利用前に以下を行う。
 
-1. `supabase/migrations/0001_init.sql`と`0002_item_photos_square_image.sql`を順番に適用する
+1. `supabase/migrations/0001_init.sql`、`0002_item_photos_square_image.sql`、
+   `0003_item_square_category.sql`を順番に適用する
 2. Workerへ`SUPABASE_URL`、`SUPABASE_SECRET_KEY`（SupabaseのSecret key）、
    `SQUARE_WEBHOOK_SIGNATURE_KEY`、`SQUARE_WEBHOOK_NOTIFICATION_URL`を設定する
 3. Square Developer Consoleで、上記通知URLを`catalog.version.updated`へ登録する
