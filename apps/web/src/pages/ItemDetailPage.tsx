@@ -9,7 +9,8 @@ import {
   type MeasurePoints,
 } from "@square-connect/measure";
 import { useItems, type MockItem, type PhotoRole } from "../store/ItemsContext";
-import { getSquareSyncStatus, StatusBadge } from "../components/StatusBadge";
+import { getSquareSyncStatus, SquareCheckedAt, StatusBadge } from "../components/StatusBadge";
+import { CompanyName } from "../components/CompanyName";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 import {
@@ -452,6 +453,7 @@ export function ItemDetailPage() {
       <input type="file" accept={SQUARE_IMAGE_ACCEPT} ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
 
       <div className="header">
+        <CompanyName />
         <Link to="/" className="back-link">
           ← 商品一覧に戻る
         </Link>
@@ -461,9 +463,10 @@ export function ItemDetailPage() {
             <p className="subtitle">
               {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
             </p>
+            <SquareCheckedAt item={item} className="item-detail-checked-at" />
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-            <StatusBadge item={item} />
+            <StatusBadge item={item} showCheckedAt={false} />
             {item.squareObjectId && (
               <button
                 type="button"

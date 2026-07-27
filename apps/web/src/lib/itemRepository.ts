@@ -69,7 +69,12 @@ const ITEM_COLUMNS = [
   "square_deleted_at",
 ].join(",");
 
-let defaultStoreIdPromise: Promise<string> | null = null;
+type DefaultStore = {
+  id: string;
+  companyName: string;
+};
+
+let defaultStorePromise: Promise<DefaultStore> | null = null;
 
 function rowToItem(row: ItemRow): Item {
   const hasMeasurements =
@@ -124,29 +129,58 @@ export function validateSquareImage(file: File): string | null {
   return null;
 }
 
-async function resolveDefaultStoreId(): Promise<string> {
+async function resolveDefaultStore(): Promise<DefaultStore> {
   const configuredStoreId = import.meta.env.VITE_DEFAULT_STORE_ID?.trim();
-  if (configuredStoreId) return configuredStoreId;
-
   const supabase = getSupabase();
-  const existing = await supabase.from("stores").select("store_id").order("created_at").limit(1);
+  if (configuredStoreId) {
+    const configured = await supabase
+      .from("stores")
+      .select("store_id,company_name")
+      .eq("store_id", configuredStoreId)
+      .maybeSingle();
+    if (configured.error) throw repositoryError("店舗の取得に失敗しました", configured.error);
+    if (!configured.data) throw new Error("設定された店舗が見つかりません");
+    return {
+      id: configured.data.store_id as string,
+      companyName: configured.data.company_name as string,
+    };
+  }
+
+  const existing = await supabase
+    .from("stores")
+    .select("store_id,company_name")
+    .order("created_at")
+    .limit(1);
   if (existing.error) throw repositoryError("店舗の取得に失敗しました", existing.error);
-  if (existing.data?.[0]?.store_id) return existing.data[0].store_id as string;
+  if (existing.data?.[0]?.store_id) {
+    return {
+      id: existing.data[0].store_id as string,
+      companyName: existing.data[0].company_name as string,
+    };
+  }
 
   const created = await supabase
     .from("stores")
     .insert({ company_name: "検証用企業", store_name: "検証用店舗" })
-    .select("store_id")
+    .select("store_id,company_name")
     .single();
   if (created.error || !created.data?.store_id) {
     throw repositoryError("検証用店舗の作成に失敗しました", created.error);
   }
-  return created.data.store_id as string;
+  return {
+    id: created.data.store_id as string,
+    companyName: created.data.company_name as string,
+  };
 }
 
 function getDefaultStoreId(): Promise<string> {
-  defaultStoreIdPromise ??= resolveDefaultStoreId();
-  return defaultStoreIdPromise;
+  defaultStorePromise ??= resolveDefaultStore();
+  return defaultStorePromise.then((store) => store.id);
+}
+
+export function getDefaultCompanyName(): Promise<string> {
+  defaultStorePromise ??= resolveDefaultStore();
+  return defaultStorePromise.then((store) => store.companyName);
 }
 
 export async function listItems(): Promise<Item[]> {

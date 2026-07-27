@@ -7,6 +7,7 @@ import {
   deleteItemPhoto as deleteStoredPhoto,
   archiveItem as archiveStoredItem,
   discardUnregisteredItem,
+  getDefaultCompanyName,
   listItemPhotos,
   listItems,
   markItemSquareSynced,
@@ -37,7 +38,7 @@ export type QuickRegisterInput = {
   price: number;
   category?: string | null;
   categoryId?: string | null;
-  photoFile?: File;
+  photoFiles?: File[];
 };
 
 // Square側で設定済みのカテゴリ。中カテゴリは親カテゴリのIDと名前を保持する。
@@ -49,6 +50,7 @@ export type SquareCategory = {
 };
 
 type ItemsContextValue = {
+  companyName: string | null;
   items: MockItem[];
   itemsLoading: boolean;
   itemsError: string | null;
@@ -80,6 +82,7 @@ function normalizeMgmtNo(mgmtNo: string): string {
 }
 
 export function ItemsProvider({ children }: { children: ReactNode }) {
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [items, setItems] = useState<MockItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [itemsError, setItemsError] = useState<string | null>(null);
@@ -87,6 +90,20 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const categoriesRequestedRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    getDefaultCompanyName()
+      .then((name) => {
+        if (active) setCompanyName(name);
+      })
+      .catch((error: unknown) => {
+        console.error("Company name loading failed", error);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const reloadItems = useCallback(async () => {
     const [storedItems, storedPhotos] = await Promise.all([listItems(), listItemPhotos()]);
@@ -138,6 +155,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ItemsContextValue>(
     () => ({
+      companyName,
       items,
       itemsLoading,
       itemsError,
@@ -156,12 +174,22 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           photos: [],
         };
         setItems((prev) => [item, ...prev]);
-        if (input.photoFile) {
+        if (input.photoFiles?.length) {
+          const uploadedPhotos: MockPhoto[] = [];
           try {
-            const { photo } = await uploadItemPhoto(item.id, "main", input.photoFile);
-            item = { ...item, photos: [photo] };
+            for (const [index, file] of input.photoFiles.entries()) {
+              const { photo } = await uploadItemPhoto(item.id, index === 0 ? "main" : "sub", file);
+              uploadedPhotos.push(photo);
+            }
+            item = { ...item, photos: uploadedPhotos };
             setItems((prev) => prev.map((candidate) => candidate.id === item.id ? item : candidate));
           } catch (error) {
+            const photoCleanup = await Promise.allSettled(
+              uploadedPhotos.map((photo) => deleteStoredPhoto(item.id, photo.id)),
+            );
+            for (const result of photoCleanup) {
+              if (result.status === "rejected") console.error("Temporary photo cleanup failed", result.reason);
+            }
             await discardUnregisteredItem(item.id).catch((cleanupError) => {
               console.error("Temporary item cleanup failed", cleanupError);
             });
@@ -178,13 +206,18 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         setItems((prev) => prev.filter((it) => it.id !== id));
       },
       discardItem: async (id) => {
-        const item = items.find((candidate) => candidate.id === id);
-        if (item) {
-          const photoCleanup = await Promise.allSettled(
-            item.photos.map((photo) => deleteStoredPhoto(id, photo.id)),
-          );
-          for (const result of photoCleanup) {
-            if (result.status === "rejected") console.error("Temporary photo cleanup failed", result.reason);
+        // 呼び出し元が商品作成直後の古いstateを参照していても、保存済み写真を
+        // 取りこぼさないようリポジトリから最新一覧を取得して削除する。
+        const storedPhotos = await listItemPhotos();
+        const photoCleanup = await Promise.allSettled(
+          storedPhotos
+            .filter((photo) => photo.itemId === id)
+            .map((photo) => deleteStoredPhoto(id, photo.id)),
+        );
+        for (const result of photoCleanup) {
+          if (result.status === "rejected") {
+            console.error("Temporary photo cleanup failed", result.reason);
+            throw result.reason;
           }
         }
         await discardUnregisteredItem(id);
@@ -285,7 +318,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       // カテゴリはSquare側で頻繁に変わるものではないため、セッション中に1回だけ取得してキャッシュする。
       loadSquareCategories,
     }),
-    [items, itemsLoading, itemsError, reloadItems, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
+    [companyName, items, itemsLoading, itemsError, reloadItems, squareCategories, categoriesLoading, categoriesError, loadSquareCategories],
   );
 
   return <ItemsContext.Provider value={value}>{children}</ItemsContext.Provider>;

@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { GENDER_LABELS, type Gender } from "@square-connect/shared";
-import { useItems, type MockItem } from "../store/ItemsContext";
+import { useItems, type MockItem, type SquareCategory } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
+import { CompanyName } from "../components/CompanyName";
+import {
+  sortCategoriesForRegistration,
+  sortParentCategoriesForRegistration,
+} from "../lib/categorySorting";
 
 type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
-type GenderFilter = "all" | NonNullable<Gender>;
+type CategoryOption = Pick<SquareCategory, "id" | "name" | "parentName">;
 
 function matchesQuery(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -13,6 +17,31 @@ function matchesQuery(item: MockItem, query: string): boolean {
   return (
     item.title.toLowerCase().includes(q) ||
     item.mgmtNo.toLowerCase().includes(q)
+  );
+}
+
+function matchesCategory(
+  item: MockItem,
+  parent: CategoryOption | undefined,
+  child: CategoryOption | undefined,
+  categories: SquareCategory[],
+): boolean {
+  if (!parent) return true;
+
+  if (child) {
+    return item.categoryId === child.id || (!item.categoryId && item.category === child.name);
+  }
+
+  if (item.categoryId) {
+    const itemCategory = categories.find((category) => category.id === item.categoryId);
+    return itemCategory?.id === parent.id || itemCategory?.parentId === parent.id;
+  }
+
+  if (!item.category) return false;
+  return categories.some(
+    (category) =>
+      category.name === item.category &&
+      (category.id === parent.id || category.parentId === parent.id),
   );
 }
 
@@ -30,11 +59,13 @@ export function ItemListPage() {
     archiveItem,
     refreshActiveItemsFromSquare,
     squareCategories,
+    categoriesLoading,
+    categoriesError,
     loadSquareCategories,
   } = useItems();
   const [query, setQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [genderFilter, setGenderFilter] = useState<GenderFilter>("all");
+  const [parentCategoryId, setParentCategoryId] = useState("");
+  const [childCategoryId, setChildCategoryId] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("mgmtNoAsc");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -59,19 +90,37 @@ export function ItemListPage() {
     return () => window.removeEventListener("focus", handleFocus);
   }, [reloadItems]);
 
-  const categoryOptions = useMemo(
-    () => [...new Set([
-      ...(squareCategories ?? []).map((category) => category.name),
-      ...items.flatMap((item) => item.category ? [item.category] : []),
-    ])].sort((a, b) => a.localeCompare(b, "ja")),
+  const parentCategories = useMemo(
+    () => sortParentCategoriesForRegistration(squareCategories ?? [], items),
     [items, squareCategories],
+  );
+  const selectedParentCategory = useMemo(
+    () => parentCategories.find((category) => category.id === parentCategoryId),
+    [parentCategories, parentCategoryId],
+  );
+  const childCategories = useMemo(
+    () => sortCategoriesForRegistration(
+      (squareCategories ?? []).filter(
+        (category) => category.parentId === selectedParentCategory?.id,
+      ),
+      items,
+    ),
+    [items, selectedParentCategory?.id, squareCategories],
+  );
+  const selectedChildCategory = useMemo(
+    () => childCategories.find((category) => category.id === childCategoryId),
+    [childCategories, childCategoryId],
   );
 
   const visibleItems = useMemo(() => {
     const filtered = items.filter((it) => {
       if (!matchesQuery(it, query)) return false;
-      if (categoryFilter !== "all" && it.category !== categoryFilter) return false;
-      if (genderFilter !== "all" && it.gender !== genderFilter) return false;
+      if (!matchesCategory(
+        it,
+        selectedParentCategory,
+        selectedChildCategory,
+        squareCategories ?? [],
+      )) return false;
       return true;
     });
     // mgmtNoは数字のみの想定（先頭ゼロは表示用の文字列としてのみ保持）なので、
@@ -82,7 +131,7 @@ export function ItemListPage() {
     if (sortKey === "priceDesc") filtered.sort((a, b) => b.price - a.price);
     if (sortKey === "title") filtered.sort((a, b) => a.title.localeCompare(b.title, "ja"));
     return filtered;
-  }, [items, query, categoryFilter, genderFilter, sortKey]);
+  }, [items, query, selectedParentCategory, selectedChildCategory, sortKey, squareCategories]);
 
   useEffect(() => {
     const visibleIds = new Set(visibleItems.map((item) => item.id));
@@ -175,6 +224,7 @@ export function ItemListPage() {
   return (
     <div className="screen">
       <div className="header">
+        <CompanyName />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <h1>商品一覧</h1>
           <div className="header-actions">
@@ -240,41 +290,63 @@ export function ItemListPage() {
           <div className="filter-options">
             <select
               className="select"
-              aria-label="カテゴリで絞り込み"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
+              aria-label="大カテゴリで絞り込み"
+              value={parentCategoryId}
+              onChange={(e) => {
+                setParentCategoryId(e.target.value);
+                setChildCategoryId("");
+              }}
+              disabled={categoriesLoading}
             >
-              <option value="all">カテゴリ：すべて</option>
-              {categoryOptions.map((category) => (
-                <option key={category} value={category}>{category}</option>
+              <option value="">大カテゴリ：すべて</option>
+              {parentCategories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
               ))}
             </select>
             <select
               className="select"
-              aria-label="対象で絞り込み"
-              value={genderFilter}
-              onChange={(e) => setGenderFilter(e.target.value as GenderFilter)}
+              aria-label="中カテゴリで絞り込み"
+              value={childCategoryId}
+              onChange={(e) => setChildCategoryId(e.target.value)}
+              disabled={categoriesLoading || !selectedParentCategory || childCategories.length === 0}
             >
-              <option value="all">対象：すべて</option>
-              {(Object.keys(GENDER_LABELS) as NonNullable<Gender>[]).map((gender) => (
-                <option key={gender} value={gender}>
-                  {GENDER_LABELS[gender]}
+              <option value="">
+                {!selectedParentCategory
+                  ? "中カテゴリ：すべて"
+                  : childCategories.length === 0
+                    ? "中カテゴリなし"
+                    : "中カテゴリ：すべて"}
+              </option>
+              {childCategories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
                 </option>
               ))}
             </select>
-            <select
-              className="select filter-sort"
-              aria-label="商品の並び順"
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as SortKey)}
-            >
-              <option value="mgmtNoAsc">商品番号順（昇順）</option>
-              <option value="mgmtNoDesc">商品番号順（降順）</option>
-              <option value="priceAsc">価格が安い順</option>
-              <option value="priceDesc">価格が高い順</option>
-              <option value="title">商品名順（あいうえお）</option>
-            </select>
           </div>
+          <div className="filter-meta">
+            <span className="filter-count">{visibleItems.length}件</span>
+            <label className="filter-sort-label">
+              <span>並び替え</span>
+              <select
+                className="select filter-sort"
+                aria-label="商品の並び順"
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+              >
+                <option value="mgmtNoAsc">商品番号 昇順</option>
+                <option value="mgmtNoDesc">商品番号 降順</option>
+                <option value="priceAsc">価格が安い順</option>
+                <option value="priceDesc">価格が高い順</option>
+                <option value="title">商品名順</option>
+              </select>
+            </label>
+          </div>
+          {categoriesLoading && <p className="filter-message">Squareのカテゴリを取得中…</p>}
+          {categoriesError && <p className="form-error filter-message">{categoriesError}</p>}
+          {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
+            <p className="filter-message">Squareにカテゴリが登録されていません</p>
+          )}
         </div>
       </div>
 

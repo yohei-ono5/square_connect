@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useItems } from "../store/ItemsContext";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
+import { CompanyName } from "../components/CompanyName";
 import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
@@ -27,8 +28,7 @@ export function QuickRegisterPage() {
   const [parentCategoryName, setParentCategoryName] = useState("");
   const [category, setCategory] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,10 +45,14 @@ export function QuickRegisterPage() {
   );
 
   const canSubmit = mgmtNo.trim().length > 0 && title.trim().length > 0 && price.trim().length > 0 && !submitting;
+  const photoPreviewUrls = useMemo(
+    () => photoFiles.map((file) => URL.createObjectURL(file)),
+    [photoFiles],
+  );
 
   useEffect(() => () => {
-    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
-  }, [photoPreviewUrl]);
+    photoPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+  }, [photoPreviewUrls]);
 
   useEffect(() => {
     loadSquareCategories();
@@ -80,7 +84,7 @@ export function QuickRegisterPage() {
         price: Number(price),
         category: category || null,
         categoryId: categoryId || null,
-        photoFile: photoFile ?? undefined,
+        photoFiles,
       });
       navigate("/", { state: { notice: "下書きに保存しました", noticeType: "success" } });
     } catch (error) {
@@ -109,7 +113,7 @@ export function QuickRegisterPage() {
         price: Number(price),
         category: category || null,
         categoryId: categoryId || null,
-        photoFile: photoFile ?? undefined,
+        photoFiles,
       });
       temporaryItemId = item.id;
       const response = await fetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
@@ -123,7 +127,7 @@ export function QuickRegisterPage() {
           reportingCategoryId: parentCategories.find(
             (parent) => parent.name === parentCategoryName,
           )?.id,
-          hasPhotos: photoFile !== null,
+          hasPhotos: photoFiles.length > 0,
         }),
       });
       const result = (await response.json().catch(() => null)) as
@@ -160,161 +164,190 @@ export function QuickRegisterPage() {
   }
 
   function handlePhotoChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!file) return;
-    const validationMessage = validateSquareImage(file);
-    if (validationMessage) {
-      setErrorMessage(validationMessage);
-      return;
+    if (files.length === 0) return;
+    for (const file of files) {
+      const validationMessage = validateSquareImage(file);
+      if (validationMessage) {
+        setErrorMessage(`${file.name}：${validationMessage}`);
+        return;
+      }
     }
     setErrorMessage(null);
-    setPhotoFile(file);
-    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setPhotoFiles((current) => [...current, ...files]);
   }
 
-  function removePhoto() {
-    setPhotoFile(null);
-    setPhotoPreviewUrl(null);
+  function removePhoto(index: number) {
+    setPhotoFiles((current) => current.filter((_, photoIndex) => photoIndex !== index));
+  }
+
+  function handleParentCategoryChange(nextParentName: string) {
+    const nextParent = parentCategories.find((parent) => parent.name === nextParentName);
+    setParentCategoryName(nextParentName);
+    setCategory(nextParentName);
+    setCategoryId(nextParent?.id ?? "");
+  }
+
+  function handleChildCategoryChange(nextCategoryId: string) {
+    const nextCategory = [
+      parentCategories.find((parent) => parent.name === parentCategoryName),
+      ...childCategories,
+    ].find((candidate) => candidate?.id === nextCategoryId);
+    setCategoryId(nextCategoryId);
+    if (nextCategory) {
+      setCategory(nextCategory.name);
+      return;
+    }
+    setCategory("");
   }
 
   return (
     <div className="screen">
       <div className="header">
+        <CompanyName />
         <Link to="/" className="back-link">
           ← 商品一覧に戻る
         </Link>
         <h1>クイック登録</h1>
-        <p className="subtitle">商品番号・商品名・金額でSquareへ登録します。写真は任意で追加できます。</p>
+        <p className="subtitle">必須項目を入力して、下書き保存またはSquareへ登録します。</p>
       </div>
 
       <form className="content" onSubmit={(e) => e.preventDefault()}>
-        <div className="field">
-          <label htmlFor="mgmtNo">商品番号（SKU）</label>
-          <input
-            id="mgmtNo"
-            className="input"
-            placeholder="例：01041"
-            inputMode="numeric"
-            value={mgmtNo}
-            onChange={(e) => setMgmtNo(e.target.value)}
-            autoFocus
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="title">商品名</label>
-          <input
-            id="title"
-            className="input"
-            placeholder="例：ディズニー Tシャツ"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="price">金額（円）</label>
-          <input
-            id="price"
-            className="input"
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            placeholder="例：3000"
-            value={price}
-            onChange={(e) => {
-              if (/^\d*$/.test(e.target.value)) setPrice(e.target.value);
-            }}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="quick-parent-category">大カテゴリ（任意）</label>
-          <select
-            id="quick-parent-category"
-            className="select"
-            value={parentCategoryName}
-            onChange={(e) => {
-              const nextParentName = e.target.value;
-              const nextParent = parentCategories.find((parent) => parent.name === nextParentName);
-              setParentCategoryName(nextParentName);
-              setCategory(nextParentName);
-              setCategoryId(nextParent?.id ?? "");
-            }}
-            disabled={categoriesLoading}
-          >
-            <option value="">未設定</option>
-            {parentCategories.map((parent) => (
-              <option key={parent.id} value={parent.name}>
-                {parent.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="quick-child-category">中カテゴリ（任意）</label>
-          <select
-            id="quick-child-category"
-            className="select"
-            value={categoryId}
-            onChange={(e) => {
-              const nextCategoryId = e.target.value;
-              const nextCategory = [
-                parentCategories.find((parent) => parent.name === parentCategoryName),
-                ...childCategories,
-              ].find((candidate) => candidate?.id === nextCategoryId);
-              setCategoryId(nextCategoryId);
-              if (nextCategory) setCategory(nextCategory.name);
-            }}
-            disabled={categoriesLoading || !parentCategoryName || childCategories.length === 0}
-          >
-            {!parentCategoryName && <option value="">先に大カテゴリを選択</option>}
-            {parentCategoryName && (
-              <option value={parentCategories.find((parent) => parent.name === parentCategoryName)?.id ?? ""}>
-                {childCategories.length === 0
-                  ? "中カテゴリなし"
-                  : `指定なし（${parentCategoryName}のみ）`}
-              </option>
+        <section className="quick-section">
+          <div className="quick-section-heading">
+            <h2>必須項目</h2>
+          </div>
+          <div className="field">
+            <label htmlFor="mgmtNo">商品番号（SKU）</label>
+            <input
+              id="mgmtNo"
+              className="input"
+              placeholder="例：01041"
+              inputMode="numeric"
+              value={mgmtNo}
+              onChange={(e) => setMgmtNo(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="title">商品名</label>
+            <input
+              id="title"
+              className="input"
+              placeholder="例：ディズニー Tシャツ"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="price">金額（円）</label>
+            <input
+              id="price"
+              className="input"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="例：3000"
+              value={price}
+              onChange={(e) => {
+                if (/^\d*$/.test(e.target.value)) setPrice(e.target.value);
+              }}
+              required
+            />
+          </div>
+        </section>
+
+        <section className="quick-section">
+          <div className="quick-section-heading">
+            <h2>任意項目</h2>
+          </div>
+          <div className="field">
+            <label htmlFor="quick-parent-category">大カテゴリ</label>
+            <select
+              id="quick-parent-category"
+              className="select"
+              value={parentCategoryName}
+              onChange={(e) => handleParentCategoryChange(e.target.value)}
+              disabled={categoriesLoading}
+            >
+              <option value="">未設定</option>
+              {parentCategories.map((parent) => (
+                <option key={parent.id} value={parent.name}>
+                  {parent.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="quick-child-category">中カテゴリ</label>
+            <select
+              id="quick-child-category"
+              className="select"
+              value={categoryId}
+              onChange={(e) => handleChildCategoryChange(e.target.value)}
+              disabled={categoriesLoading || !parentCategoryName || childCategories.length === 0}
+            >
+              {!parentCategoryName && <option value="">先に大カテゴリを選択</option>}
+              {parentCategoryName && (
+                <option value={parentCategories.find((parent) => parent.name === parentCategoryName)?.id ?? ""}>
+                  {childCategories.length === 0
+                    ? "中カテゴリなし"
+                    : `指定なし（${parentCategoryName}のみ）`}
+                </option>
+              )}
+              {childCategories.map((child) => (
+                <option key={child.id} value={child.id}>
+                  {child.name}
+                </option>
+              ))}
+            </select>
+            {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
+            {categoriesError && <p className="form-error">{categoriesError}</p>}
+            {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
+              <p className="hint">Squareにカテゴリが登録されていません</p>
             )}
-            {childCategories.map((child) => (
-              <option key={child.id} value={child.id}>
-                {child.name}
-              </option>
-            ))}
-          </select>
-          {categoriesLoading && <p className="hint">Squareのカテゴリを取得中…</p>}
-          {categoriesError && <p className="form-error">{categoriesError}</p>}
-          {squareCategories?.length === 0 && !categoriesLoading && !categoriesError && (
-            <p className="hint">Squareにカテゴリが登録されていません</p>
-          )}
-        </div>
-        <div className="field">
-          <label htmlFor="quick-photo">写真（任意）</label>
-          <input
-            id="quick-photo"
-            ref={fileInputRef}
-            type="file"
-            accept={SQUARE_IMAGE_ACCEPT}
-            style={{ display: "none" }}
-            onChange={handlePhotoChange}
-          />
-          {photoPreviewUrl ? (
-            <div className="quick-photo-preview">
-              <img src={photoPreviewUrl} alt="登録する写真" />
-              <div className="quick-photo-actions">
-                <button type="button" className="btn" onClick={() => fileInputRef.current?.click()}>
-                  変更
-                </button>
-                <button type="button" className="btn" onClick={removePhoto}>
-                  削除
-                </button>
-              </div>
+          </div>
+          <div className="field">
+            <label htmlFor="quick-photo">写真</label>
+            <input
+              id="quick-photo"
+              ref={fileInputRef}
+              type="file"
+              accept={SQUARE_IMAGE_ACCEPT}
+              multiple
+              style={{ display: "none" }}
+              onChange={handlePhotoChange}
+            />
+            <div className="photo-grid">
+              {photoPreviewUrls.map((previewUrl, index) => (
+                <div key={previewUrl} className="photo-slot filled">
+                  <img src={previewUrl} alt={index === 0 ? "メイン写真" : `追加写真 ${index + 1}`} />
+                  {index === 0 && <span className="photo-slot-label">メイン</span>}
+                  <button
+                    type="button"
+                    className="btn quick-photo-remove"
+                    onClick={() => removePhoto(index)}
+                    aria-label={`${index === 0 ? "メイン写真" : `追加写真 ${index + 1}`}を削除`}
+                  >
+                    削除
+                  </button>
+                </div>
+              ))}
+              <button type="button" className="photo-slot empty" onClick={() => fileInputRef.current?.click()}>
+                <span>＋</span>
+                <span className="quick-photo-add-label">
+                  {photoFiles.length === 0 ? "写真を選択" : "写真を追加"}
+                </span>
+              </button>
             </div>
-          ) : (
-            <button type="button" className="photo-upload-btn" onClick={() => fileInputRef.current?.click()}>
-              <span>＋</span>
-              <span>写真を追加</span>
-            </button>
-          )}
-        </div>
+            <p className="hint">
+              1枚目がメイン写真になります。JPEG・PJPEG・PNG・GIF（各15MB以下）に対応しています。
+            </p>
+          </div>
+        </section>
         <div className="footer-bar" style={{ padding: 0, border: "none" }}>
           <button type="button" className="btn btn-primary" style={{ flex: 1 }} onClick={handleSaveDraft} disabled={!canSubmit}>
             下書き保存
@@ -324,9 +357,6 @@ export function QuickRegisterPage() {
           </button>
         </div>
         {errorMessage && <p className="form-error">{errorMessage}</p>}
-        <p className="hint">
-          写真はJPEG・PJPEG・PNG・GIF（15MB以下）に対応しています。対象（メンズ/レディース/ユニセックス）・サイズ・採寸・コンディションはあとから商品詳細編集画面で追加できます。
-        </p>
       </form>
     </div>
   );

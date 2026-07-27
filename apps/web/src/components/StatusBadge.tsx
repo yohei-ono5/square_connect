@@ -24,7 +24,32 @@ function formatSquareCheckedAt(value: string): string {
   }).format(date);
 }
 
-export function StatusBadge({ item }: { item: MockItem }) {
+export function SquareCheckedAt({
+  item,
+  className = "",
+}: {
+  item: MockItem;
+  className?: string;
+}) {
+  if (!item.squareObjectId) return null;
+
+  return (
+    <time
+      className={`square-checked-at ${className}`.trim()}
+      dateTime={item.squareSyncedAt ?? undefined}
+    >
+      最終確認: {item.squareSyncedAt ? formatSquareCheckedAt(item.squareSyncedAt) : "未確認"}
+    </time>
+  );
+}
+
+export function StatusBadge({
+  item,
+  showCheckedAt = true,
+}: {
+  item: MockItem;
+  showCheckedAt?: boolean;
+}) {
   const status = getSquareSyncStatus(item);
   const badge = status === "reflected"
     ? <span className="badge badge-success">Square反映済み</span>
@@ -37,11 +62,7 @@ export function StatusBadge({ item }: { item: MockItem }) {
   return (
     <span className="square-status">
       {badge}
-      {item.squareObjectId && (
-        <time className="square-checked-at" dateTime={item.squareSyncedAt ?? undefined}>
-          最終確認: {item.squareSyncedAt ? formatSquareCheckedAt(item.squareSyncedAt) : "未確認"}
-        </time>
-      )}
+      {showCheckedAt && <SquareCheckedAt item={item} />}
     </span>
   );
 }

@@ -66,6 +66,17 @@ a {
   background: var(--surface);
 }
 
+.company-name {
+  overflow: hidden;
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .back-link {
   display: inline-flex;
   align-items: center;
@@ -120,6 +131,7 @@ h1 {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
+  text-decoration: none;
 }
 
 .btn-danger {
@@ -183,6 +195,12 @@ h1 {
   color: var(--text-secondary);
   font-size: 10px;
   white-space: nowrap;
+}
+
+.item-detail-checked-at {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
 }
 
 .list {
@@ -421,27 +439,40 @@ h1 {
   background: var(--surface);
 }
 
-.quick-photo-preview {
-  display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
-  gap: 10px;
-  align-items: stretch;
+.quick-section {
+  margin: 0;
 }
 
-.quick-photo-preview img {
-  width: 118px;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-muted);
+.quick-section + .quick-section {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 0.5px solid var(--border);
 }
 
-.quick-photo-actions {
+.quick-section-heading {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
-  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.quick-section-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.quick-photo-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.quick-photo-add-label {
+  font-size: 12px;
 }
 
 .hint {
@@ -501,8 +532,40 @@ h1 {
   font-size: 13px;
 }
 
-.filter-sort {
-  grid-column: 1 / -1;
+.filter-meta {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.filter-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.filter-sort-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.filter-bar .filter-sort {
+  width: 126px;
+  min-height: 32px;
+  padding: 4px 26px 4px 8px;
+  font-size: 12px;
+}
+
+.filter-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .footer-bar {
