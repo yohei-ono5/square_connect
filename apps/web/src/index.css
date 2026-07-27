@@ -66,15 +66,17 @@ a {
   background: var(--surface);
 }
 
-.company-name {
-  overflow: hidden;
-  margin: 0 0 6px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.4;
-  text-overflow: ellipsis;
+.item-list-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
   white-space: nowrap;
+}
+
+.item-list-company-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .back-link {

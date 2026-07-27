@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useItems, type MockItem, type SquareCategory } from "../store/ItemsContext";
 import { StatusBadge } from "../components/StatusBadge";
-import { CompanyName } from "../components/CompanyName";
 import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
@@ -52,6 +51,7 @@ export function ItemListPage() {
     noticeType?: "success" | "warning";
   } | null);
   const {
+    companyName,
     items,
     itemsLoading,
     itemsError,
@@ -224,9 +224,11 @@ export function ItemListPage() {
   return (
     <div className="screen">
       <div className="header">
-        <CompanyName />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <h1>商品一覧</h1>
+          <h1 className="item-list-title">
+            {companyName && <span className="item-list-company-name">{companyName}</span>}
+            <span>商品一覧</span>
+          </h1>
           <div className="header-actions">
             {selectionMode ? (
               <>
@@ -247,13 +249,13 @@ export function ItemListPage() {
                   aria-label="Squareから商品一覧を更新"
                   title="Squareから商品一覧を更新"
                 >
-                  {squareRefreshing ? "更新中…" : "↻ 更新"}
+                  {squareRefreshing ? "更新中…" : "更新"}
                 </button>
                 <button type="button" className="btn" onClick={toggleSelectionMode} disabled={visibleItems.length === 0}>
                   選択
                 </button>
                 <Link to="/items/new" className="btn btn-primary">
-                  ＋登録
+                  登録
                 </Link>
               </>
             )}

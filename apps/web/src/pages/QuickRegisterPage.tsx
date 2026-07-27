@@ -3,7 +3,6 @@ import { Link, useNavigate } from "react-router-dom";
 import { useItems } from "../store/ItemsContext";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
-import { CompanyName } from "../components/CompanyName";
 import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
@@ -205,7 +204,6 @@ export function QuickRegisterPage() {
   return (
     <div className="screen">
       <div className="header">
-        <CompanyName />
         <Link to="/" className="back-link">
           ← 商品一覧に戻る
         </Link>

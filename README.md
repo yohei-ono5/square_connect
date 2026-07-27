@@ -91,7 +91,7 @@ Square登録リクエストの冪等性キーに利用する。Square登録成�
 
 `VITE_DEFAULT_STORE_ID`が未設定の場合は`stores`の最初の店舗を使う。
 店舗が1件もない場合は、検証用の企業・店舗を自動作成する。
-現在の1社運用では、選択された店舗の`stores.company_name`を全画面の左上に表示する。
+現在の1社運用では、選択された店舗の`stores.company_name`を商品一覧の見出しに表示する。
 
 Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 をBuild variablesとして設定する。`VITE_SUPABASE_ANON_KEY`は既存の環境変数名を
@@ -226,7 +226,7 @@ pnpm test        # 全パッケージのテストを実行
 - R2の商品写真をSquare Catalogの商品画像として添付・削除同期する
 - 商品詳細からSquareの最新商品情報をID指定で取得し、Supabaseと画面へ反映する
 - 商品情報と写真の反映状況を「Square未反映／Square反映済み」など4状態と最終確認日時で表示する
-- `stores.company_name`を全画面の左上に表示する
+- `stores.company_name`を商品一覧の見出しに表示する
 - 採寸は写真なしでも手動入力でき、自動採寸は確認後に反映する試験機能として提供する
 - 商品アーカイブではSquareとR2を変更せず、SKUを使用済みのまま保持する
 - Supabase Authは未使用で、テスト運用向け公開RLSを使用している

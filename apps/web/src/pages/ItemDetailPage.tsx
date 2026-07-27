@@ -10,7 +10,6 @@ import {
 } from "@square-connect/measure";
 import { useItems, type MockItem, type PhotoRole } from "../store/ItemsContext";
 import { getSquareSyncStatus, SquareCheckedAt, StatusBadge } from "../components/StatusBadge";
-import { CompanyName } from "../components/CompanyName";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 import {
@@ -453,7 +452,6 @@ export function ItemDetailPage() {
       <input type="file" accept={SQUARE_IMAGE_ACCEPT} ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
 
       <div className="header">
-        <CompanyName />
         <Link to="/" className="back-link">
           ← 商品一覧に戻る
         </Link>
