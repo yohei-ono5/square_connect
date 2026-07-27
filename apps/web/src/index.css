@@ -732,3 +732,24 @@ h1 {
   color: var(--text-secondary);
   white-space: pre-line;
 }
+
+.description-heading {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.description-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.description-copy-btn {
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 13px;
+}

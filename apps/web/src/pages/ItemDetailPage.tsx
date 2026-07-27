@@ -116,6 +116,7 @@ export function ItemDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [descriptionCopyState, setDescriptionCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [customSizeSelected, setCustomSizeSelected] = useState(false);
   const [savedBaseline, setSavedBaseline] = useState<{ itemId: string; signature: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -433,6 +434,31 @@ export function ItemDetailPage() {
     setActivePoint(null);
   }
 
+  async function handleCopyDescription() {
+    const description = buildDescription(currentItem);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(description);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = description;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        if (!copied) throw new Error("Copy command failed");
+      }
+      setDescriptionCopyState("copied");
+    } catch {
+      setDescriptionCopyState("error");
+    }
+    window.setTimeout(() => setDescriptionCopyState("idle"), 2000);
+  }
+
   const mgmtNoConflict = item.mgmtNo.trim().length > 0 && isMgmtNoTaken(item.mgmtNo, item.id);
   const mainPhoto = item.photos.find((p) => p.role === "main");
   const subPhotos = item.photos.filter((p) => p.role === "sub");
@@ -458,9 +484,6 @@ export function ItemDetailPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
           <div>
             <p style={{ fontSize: 16, fontWeight: 500, margin: 0 }}>{item.title || "（商品名未設定）"}</p>
-            <p className="subtitle">
-              {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
-            </p>
             <SquareCheckedAt item={item} className="item-detail-checked-at" />
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
@@ -730,8 +753,7 @@ export function ItemDetailPage() {
       {tab === "basic" && (
         <div className="content">
           <section className="basic-section">
-            <h2>Square連携項目</h2>
-            <p className="hint">Squareの商品情報・価格・カテゴリへ直接反映されます。</p>
+            <h2>Square連携項目（Squareに直接反映されます）</h2>
             <div className="field">
               <label htmlFor="mgmtNo">商品番号（SKU）</label>
               <input
@@ -833,10 +855,7 @@ export function ItemDetailPage() {
           </section>
 
           <section className="basic-section">
-            <h2>アプリ管理項目</h2>
-            <p className="hint">
-              Squareの専用項目とは未連携です。表記サイズとコンディションはSquareの商品説明文へ反映されます。
-            </p>
+            <h2>アプリ管理項目（Squareには反映されません）</h2>
             <div className="field">
               <label htmlFor="gender">対象</label>
               <select
@@ -905,7 +924,24 @@ export function ItemDetailPage() {
 
       {tab === "desc" && (
         <div className="content">
-          <div className="description-preview">{buildDescription(item)}</div>
+          <div className="description-heading">
+            <h2>自動で作成（Squareには反映されません）</h2>
+            <button
+              type="button"
+              className="btn description-copy-btn"
+              onClick={handleCopyDescription}
+            >
+              {descriptionCopyState === "copied" ? "コピーしました" : "本文をコピー"}
+            </button>
+          </div>
+          <div className="description-preview" id="generated-description">
+            {buildDescription(item)}
+          </div>
+          {descriptionCopyState === "error" && (
+            <p className="form-error" role="status">
+              コピーできませんでした。本文を長押ししてコピーしてください。
+            </p>
+          )}
         </div>
       )}
 
