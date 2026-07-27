@@ -487,6 +487,7 @@ h1 {
   font-size: 12px;
   color: #b42318;
   margin: 10px 0 0;
+  white-space: pre-line;
 }
 
 .list-notice {

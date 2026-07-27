@@ -16,6 +16,11 @@ import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
 } from "../lib/categorySorting";
+import {
+  AppError,
+  codedUserMessage,
+  toUserErrorMessage,
+} from "../lib/appError";
 
 type TabKey = "photo" | "measure" | "basic" | "desc";
 const STANDARD_SIZE_OPTIONS = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "FREE"] as const;
@@ -191,7 +196,7 @@ export function ItemDetailPage() {
       setSaveError(null);
       refreshItemFromSquare(id)
         .catch((error: unknown) => {
-          setSaveError(error instanceof Error ? error.message : "Squareの最新情報を取得できませんでした");
+          setSaveError(toUserErrorMessage(error, "SQUARE_ITEM_REFRESH"));
         })
         .finally(() => setRefreshingSquare(false));
     };
@@ -260,7 +265,7 @@ export function ItemDetailPage() {
       await refreshItemFromSquare(id);
       showToast("Squareの最新情報を取得しました");
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Squareの最新情報を取得できませんでした");
+      setSaveError(toUserErrorMessage(error, "SQUARE_ITEM_REFRESH"));
     } finally {
       setRefreshingSquare(false);
     }
@@ -274,7 +279,7 @@ export function ItemDetailPage() {
       await saveItem(id);
       showToast("下書きを保存しました。Squareには反映されていません");
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "下書きの保存に失敗しました");
+      setSaveError(toUserErrorMessage(error, "ITEM_SAVE"));
     } finally {
       setSavingAction(null);
     }
@@ -301,7 +306,7 @@ export function ItemDetailPage() {
           }),
         });
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
-        if (!response.ok) throw new Error(result?.message ?? "Squareの商品更新に失敗しました");
+        if (!response.ok) throw new AppError("SQUARE_UPDATE", result, result?.message);
         const syncedPhotos = await syncPhotosToSquare(id);
         await markSquareSynced(id);
         showToast(syncedPhotos > 0 ? `写真${syncedPhotos}枚を含めてSquareを更新しました` : "Squareを更新しました");
@@ -319,10 +324,19 @@ export function ItemDetailPage() {
           }),
         });
         const result = (await response.json().catch(() => null)) as
-          | { squareObjectId?: string; squareVariationId?: string; message?: string; imageSyncWarning?: string }
+          | {
+              squareObjectId?: string;
+              squareVariationId?: string;
+              error?: string;
+              message?: string;
+              imageSyncWarning?: string;
+            }
           | null;
         if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
-          throw new Error(result?.message ?? "Squareへの登録に失敗しました");
+          if (result?.error === "sku_already_exists") {
+            throw new AppError("ITEM_SKU_DUPLICATE", result);
+          }
+          throw new AppError("SQUARE_REGISTER", result, result?.message);
         }
         await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
         showToast(
@@ -332,7 +346,10 @@ export function ItemDetailPage() {
         );
       }
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Squareへの反映に失敗しました");
+      setSaveError(toUserErrorMessage(
+        error,
+        currentItem.squareObjectId ? "SQUARE_UPDATE" : "SQUARE_REGISTER",
+      ));
     } finally {
       setSavingAction(null);
     }
@@ -359,7 +376,7 @@ export function ItemDetailPage() {
     try {
       await addPhoto(id, role, file);
     } catch (error) {
-      setPhotoError(error instanceof Error ? error.message : "写真の保存に失敗しました");
+      setPhotoError(toUserErrorMessage(error, "PHOTO_SAVE"));
     } finally {
       setPhotoBusy(false);
     }
@@ -372,7 +389,7 @@ export function ItemDetailPage() {
     try {
       await removePhoto(id, photoId);
     } catch (error) {
-      setPhotoError(error instanceof Error ? error.message : "写真の削除に失敗しました");
+      setPhotoError(toUserErrorMessage(error, "PHOTO_DELETE"));
     } finally {
       setPhotoBusy(false);
     }
@@ -764,7 +781,7 @@ export function ItemDetailPage() {
                 onChange={(e) => updateItem(id!, { mgmtNo: e.target.value })}
               />
               {mgmtNoConflict && (
-                <p className="form-error">この商品番号は他の商品ですでに使われています</p>
+                <p className="form-error">{codedUserMessage("ITEM_SKU_DUPLICATE")}</p>
               )}
             </div>
             <div className="field">
@@ -939,7 +956,7 @@ export function ItemDetailPage() {
           </div>
           {descriptionCopyState === "error" && (
             <p className="form-error" role="status">
-              コピーできませんでした。本文を長押ししてコピーしてください。
+              {codedUserMessage("COPY")}
             </p>
           )}
         </div>

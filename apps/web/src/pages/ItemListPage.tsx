@@ -6,6 +6,7 @@ import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
 } from "../lib/categorySorting";
+import { toUserErrorMessage } from "../lib/appError";
 
 type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
 type CategoryOption = Pick<SquareCategory, "id" | "name" | "parentName">;
@@ -181,7 +182,7 @@ export function ItemListPage() {
       setSelectionMode(false);
       setArchiveDialogOpen(false);
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : "商品のアーカイブに失敗しました");
+      setArchiveError(toUserErrorMessage(error, "ITEM_ARCHIVE"));
     } finally {
       setArchiving(false);
     }
@@ -215,7 +216,7 @@ export function ItemListPage() {
         `Squareの変更を${result.changed}件反映しました${details.length > 0 ? `（${details.join("、")}）` : ""}`,
       );
     } catch (error) {
-      setSquareRefreshError(error instanceof Error ? error.message : "Squareの商品一覧を更新できませんでした");
+      setSquareRefreshError(toUserErrorMessage(error, "SQUARE_LIST_REFRESH"));
     } finally {
       setSquareRefreshing(false);
     }

@@ -7,6 +7,11 @@ import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
 } from "../lib/categorySorting";
+import {
+  AppError,
+  codedUserMessage,
+  toUserErrorMessage,
+} from "../lib/appError";
 
 export function QuickRegisterPage() {
   const {
@@ -61,7 +66,7 @@ export function QuickRegisterPage() {
   // SKU衝突もここで先に防ぐ。
   function checkMgmtNoAvailable(): boolean {
     if (isMgmtNoTaken(mgmtNo)) {
-      setErrorMessage(`商品番号「${mgmtNo.trim()}」は既に商品一覧に存在します`);
+      setErrorMessage(codedUserMessage("ITEM_SKU_DUPLICATE"));
       return false;
     }
     return true;
@@ -87,7 +92,7 @@ export function QuickRegisterPage() {
       });
       navigate("/", { state: { notice: "下書きに保存しました", noticeType: "success" } });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "商品の保存に失敗しました");
+      setErrorMessage(toUserErrorMessage(error, "ITEM_SAVE"));
       setSubmitting(false);
     }
   }
@@ -130,11 +135,20 @@ export function QuickRegisterPage() {
         }),
       });
       const result = (await response.json().catch(() => null)) as
-        | { squareObjectId?: string; squareVariationId?: string; message?: string; imageSyncWarning?: string }
+        | {
+            squareObjectId?: string;
+            squareVariationId?: string;
+            error?: string;
+            message?: string;
+            imageSyncWarning?: string;
+          }
         | null;
 
       if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
-        throw new Error(result?.message ?? "Squareへの登録に失敗しました");
+        if (result?.error === "sku_already_exists") {
+          throw new AppError("ITEM_SKU_DUPLICATE", result);
+        }
+        throw new AppError("SQUARE_REGISTER", result, result?.message);
       }
 
       squareRegistered = true;
@@ -146,16 +160,16 @@ export function QuickRegisterPage() {
         },
       });
     } catch (error) {
-      let message = error instanceof Error ? error.message : "Squareへの登録に失敗しました";
+      let message = toUserErrorMessage(error, "SQUARE_REGISTER");
       if (temporaryItemId && !squareRegistered) {
         try {
           await discardItem(temporaryItemId);
         } catch (cleanupError) {
           console.error("Failed registration cleanup failed", cleanupError);
-          message += "。一時データの削除にも失敗したため、商品一覧を確認してください";
+          message += "\n一時データの削除にも失敗したため、商品一覧を確認してください。";
         }
       } else if (squareRegistered) {
-        message += "。Squareへの商品登録は成功していますが、Supabaseへの保存に失敗しました";
+        message += "\nSquareへの商品登録は成功していますが、保存処理に失敗しました。商品一覧を確認してください。";
       }
       setErrorMessage(message);
       setSubmitting(false);

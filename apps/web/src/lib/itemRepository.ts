@@ -1,6 +1,7 @@
 import type { Condition, Gender, Item, ItemStatus } from "@square-connect/shared";
 import { WORKER_BASE_URL } from "./config";
 import { getSupabase } from "./supabaseClient";
+import { AppError, type AppErrorKey } from "./appError";
 
 export type StoredPhoto = {
   id: string;
@@ -107,8 +108,25 @@ function rowToItem(row: ItemRow): Item {
   };
 }
 
-function repositoryError(action: string, error: { message: string } | null): Error {
-  return new Error(error ? `${action}: ${error.message}` : action);
+type RepositoryErrorDetail = {
+  message: string;
+  code?: string;
+  details?: string;
+};
+
+function repositoryError(key: AppErrorKey, error: RepositoryErrorDetail | null): AppError {
+  return new AppError(key, error);
+}
+
+function itemPersistenceError(error: RepositoryErrorDetail | null): AppError {
+  const errorText = `${error?.message ?? ""} ${error?.details ?? ""}`;
+  if (
+    error?.code === "23505" &&
+    errorText.includes("items_store_id_mgmt_no_key")
+  ) {
+    return new AppError("ITEM_SKU_DUPLICATE", error);
+  }
+  return repositoryError("ITEM_SAVE", error);
 }
 
 function photoRowToStoredPhoto(row: PhotoRow): StoredPhoto {
@@ -138,8 +156,8 @@ async function resolveDefaultStore(): Promise<DefaultStore> {
       .select("store_id,company_name")
       .eq("store_id", configuredStoreId)
       .maybeSingle();
-    if (configured.error) throw repositoryError("店舗の取得に失敗しました", configured.error);
-    if (!configured.data) throw new Error("設定された店舗が見つかりません");
+    if (configured.error) throw repositoryError("DATA_STORE", configured.error);
+    if (!configured.data) throw new AppError("DATA_STORE");
     return {
       id: configured.data.store_id as string,
       companyName: configured.data.company_name as string,
@@ -151,7 +169,7 @@ async function resolveDefaultStore(): Promise<DefaultStore> {
     .select("store_id,company_name")
     .order("created_at")
     .limit(1);
-  if (existing.error) throw repositoryError("店舗の取得に失敗しました", existing.error);
+  if (existing.error) throw repositoryError("DATA_STORE", existing.error);
   if (existing.data?.[0]?.store_id) {
     return {
       id: existing.data[0].store_id as string,
@@ -165,7 +183,7 @@ async function resolveDefaultStore(): Promise<DefaultStore> {
     .select("store_id,company_name")
     .single();
   if (created.error || !created.data?.store_id) {
-    throw repositoryError("検証用店舗の作成に失敗しました", created.error);
+    throw repositoryError("DATA_STORE", created.error);
   }
   return {
     id: created.data.store_id as string,
@@ -189,7 +207,7 @@ export async function listItems(): Promise<Item[]> {
     .select(ITEM_COLUMNS)
     .is("deleted_at", null)
     .order("updated_at", { ascending: false });
-  if (result.error) throw repositoryError("商品一覧の取得に失敗しました", result.error);
+  if (result.error) throw repositoryError("ITEM_LOAD", result.error);
   return (result.data as unknown as ItemRow[]).map(rowToItem);
 }
 
@@ -199,7 +217,7 @@ export async function listItemPhotos(): Promise<StoredPhoto[]> {
     .select("item_photo_id,item_id,role,storage_path,square_image_id")
     .order("sort", { ascending: true })
     .order("created_at", { ascending: false });
-  if (result.error) throw repositoryError("写真一覧の取得に失敗しました", result.error);
+  if (result.error) throw repositoryError("PHOTO_LOAD", result.error);
   return (result.data as unknown as PhotoRow[]).map(photoRowToStoredPhoto);
 }
 
@@ -222,7 +240,7 @@ export async function uploadItemPhoto(
     photo?: StoredPhoto;
     message?: string;
   } | null;
-  if (!response.ok || !result?.photo) throw new Error(result?.message ?? "写真の保存に失敗しました");
+  if (!response.ok || !result?.photo) throw new AppError("PHOTO_SAVE", result, result?.message);
   return { photo: result.photo };
 }
 
@@ -232,7 +250,7 @@ export async function syncItemPhotosToSquare(itemId: string): Promise<number> {
     { method: "POST" },
   );
   const result = (await response.json().catch(() => null)) as { synced?: number; message?: string } | null;
-  if (!response.ok) throw new Error(result?.message ?? "写真をSquareへ反映できませんでした");
+  if (!response.ok) throw new AppError("PHOTO_SYNC", result, result?.message);
   return result?.synced ?? 0;
 }
 
@@ -264,7 +282,7 @@ export async function refreshActiveItemsFromSquare(): Promise<SquareListRefreshR
     | (SquareListRefreshResult & { message?: string })
     | null;
   if (!response.ok || !result) {
-    throw new Error(result?.message ?? "Squareの商品一覧を更新できませんでした");
+    throw new AppError("SQUARE_LIST_REFRESH", result, result?.message);
   }
   return result;
 }
@@ -278,7 +296,7 @@ export async function refreshItemFromSquare(itemId: string): Promise<SquareItemR
     | { item?: Omit<SquareItemRefresh, "syncedAt">; syncedAt?: string; message?: string }
     | null;
   if (!response.ok || !result?.item) {
-    throw new Error(result?.message ?? "Squareの最新情報を取得できませんでした");
+    throw new AppError("SQUARE_ITEM_REFRESH", result, result?.message);
   }
   return { ...result.item, syncedAt: result.syncedAt ?? new Date().toISOString() };
 }
@@ -289,7 +307,7 @@ export async function deleteItemPhoto(itemId: string, itemPhotoId: string): Prom
     { method: "DELETE" },
   );
   const result = (await response.json().catch(() => null)) as { message?: string } | null;
-  if (!response.ok) throw new Error(result?.message ?? "写真の削除に失敗しました");
+  if (!response.ok) throw new AppError("PHOTO_DELETE", result, result?.message);
 }
 
 export async function createItem(input: {
@@ -313,7 +331,7 @@ export async function createItem(input: {
     })
     .select(ITEM_COLUMNS)
     .single();
-  if (result.error || !result.data) throw repositoryError("商品の保存に失敗しました", result.error);
+  if (result.error || !result.data) throw itemPersistenceError(result.error);
   return rowToItem(result.data as unknown as ItemRow);
 }
 
@@ -339,7 +357,7 @@ export async function saveItem(item: Item): Promise<string> {
       updated_at: updatedAt,
     })
     .eq("item_id", item.id);
-  if (result.error) throw repositoryError("商品の更新に失敗しました", result.error);
+  if (result.error) throw itemPersistenceError(result.error);
   return updatedAt;
 }
 
@@ -359,7 +377,7 @@ export async function saveSquareRegistration(
       updated_at: now,
     })
     .eq("item_id", itemId);
-  if (result.error) throw repositoryError("Square登録結果の保存に失敗しました", result.error);
+  if (result.error) throw repositoryError("SQUARE_RESULT_SAVE", result.error);
   return now;
 }
 
@@ -369,7 +387,7 @@ export async function markItemSquareSynced(itemId: string): Promise<string> {
     .from("items")
     .update({ square_synced_at: syncedAt, square_deleted_at: null })
     .eq("item_id", itemId);
-  if (result.error) throw repositoryError("Square同期結果の保存に失敗しました", result.error);
+  if (result.error) throw repositoryError("SQUARE_RESULT_SAVE", result.error);
   return syncedAt;
 }
 
@@ -379,7 +397,7 @@ export async function archiveItem(itemId: string): Promise<void> {
     .from("items")
     .update({ deleted_at: now, updated_at: now })
     .eq("item_id", itemId);
-  if (result.error) throw repositoryError("商品のアーカイブに失敗しました", result.error);
+  if (result.error) throw repositoryError("ITEM_ARCHIVE", result.error);
 }
 
 // Square登録に失敗した新規商品だけを完全破棄する。Square IDが付いた商品は誤って
@@ -390,5 +408,5 @@ export async function discardUnregisteredItem(itemId: string): Promise<void> {
     .delete()
     .eq("item_id", itemId)
     .is("square_object_id", null);
-  if (result.error) throw repositoryError("一時商品の破棄に失敗しました", result.error);
+  if (result.error) throw repositoryError("ITEM_SAVE", result.error);
 }

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Item } from "@square-connect/shared";
 import type { MeasurePoints } from "@square-connect/measure";
 import { WORKER_BASE_URL } from "../lib/config";
+import { AppError, toUserErrorMessage } from "../lib/appError";
 import {
   createItem as createStoredItem,
   deleteItemPhoto as deleteStoredPhoto,
@@ -120,7 +121,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
     reloadItems()
       .catch((error: unknown) => {
         if (!active) return;
-        setItemsError(error instanceof Error ? error.message : "商品一覧の取得に失敗しました");
+        setItemsError(toUserErrorMessage(error, "ITEM_LOAD"));
       })
       .finally(() => {
         if (active) setItemsLoading(false);
@@ -143,12 +144,12 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           | { categories?: SquareCategory[]; message?: string }
           | null;
         if (!response.ok || !Array.isArray(result?.categories)) {
-          throw new Error(result?.message ?? "カテゴリの取得に失敗しました");
+          throw new AppError("SQUARE_CATEGORIES", result, result?.message);
         }
         setSquareCategories(result.categories);
       })
       .catch((error: unknown) => {
-        setCategoriesError(error instanceof Error ? error.message : "カテゴリの取得に失敗しました");
+        setCategoriesError(toUserErrorMessage(error, "SQUARE_CATEGORIES"));
       })
       .finally(() => setCategoriesLoading(false));
   }, []);
@@ -228,7 +229,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       },
       saveItem: async (id) => {
         const item = items.find((candidate) => candidate.id === id);
-        if (!item) throw new Error("保存対象の商品が見つかりません");
+        if (!item) throw new AppError("ITEM_NOT_FOUND");
         const updatedAt = await persistItem(item);
         setItems((prev) => prev.map((candidate) => candidate.id === id
           ? { ...candidate, updatedAt }
@@ -300,7 +301,13 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
             squareDeletedAt: null,
           };
         }));
-        if (latest.isDeleted) throw new Error("Square側ではこの商品が削除されています");
+        if (latest.isDeleted) {
+          throw new AppError(
+            "SQUARE_ITEM_REFRESH",
+            undefined,
+            "Square側ではこの商品が削除されています。",
+          );
+        }
       },
       markSquareSynced: async (id) => {
         const syncedAt = await markItemSquareSynced(id);
