@@ -7,7 +7,7 @@
 |---|---|
 | アプリ（先行） | **Webアプリ**（画像アップロード型、複数端末のブラウザから利用） |
 | アプリ（後続） | React Native（ストア審査等の手間があるため後回し） |
-| 必須項目 | **管理番号（SKU）・商品名（+SKU）・金額の3つのみ** |
+| 必須項目 | **管理番号（SKU）・商品名・金額の3つのみ** |
 | 任意項目 | 対象・カテゴリ・サイズ・コンディション・採寸・写真。未入力のままSquare登録を進め、後から追記・編集可 |
 | UIテーマ | 導入店舗の赤・黒に合わせ、アクセントカラーを **RGB(234, 51, 37) / `#EA3325`** に統一。主要ボタン等は赤地＋白文字 |
 | 言語 | **TypeScript**（フロント・サーバー共通） |
@@ -17,7 +17,7 @@
 | 形態 | 1店舗 → SaaS |
 
 > ステータス：**Phase 0 完了 / Phase 1実装・実環境検証中**（Supabase商品保存、R2写真保存、Square商品・画像連携、Webhook同期、商品単位の手動再取得まで実装済み）
-> 最終更新：2026-07-22
+> 最終更新：2026-07-31
 
 ---
 
@@ -47,7 +47,7 @@ Web プロトタイプ＝「動く仕様書」。中核パイプラインはヘ�
 - **SERVER — Cloudflare Workers（TypeScript）**
   Square/メルカリ連携、SKU重複チェックなどのAPIロジックを実行する層。Squareトークンをここに秘匿し端末には置かない。SupabaseへはREST/クライアントSDK経由でアクセス。
 - **SQUARE — Cloudflare Workers 経由**
-  Catalog APIで商品を作成・更新し、R2の写真をCatalogImageとして商品へ添付する。現状の作成処理は`present_at_all_locations: true`で、登録直後からSquareの全ロケーションに表示される。確認後公開フローへ変更する場合はロケーション設定を別途実装する。**SKU（管理番号）はSquare API側で一意性が保証されないため、作成前にWorkerが`SearchCatalogObjects`で重複チェックする。**
+  Catalog APIで商品を作成・更新し、R2の写真をCatalogImageとして商品へ添付する。Squareの商品名には商品名だけを登録し、管理番号はバリエーションのSKUへ登録する。現状の作成処理は`present_at_all_locations: true`で、登録直後からSquareの全ロケーションで利用できる。Square Dashboardの商品初期設定ではオンラインチャネルを外し、新規商品をPOSレジだけで利用する。EC掲載対象の商品は登録後にSquare Dashboardでチャネルを追加する。**SKU（管理番号）はSquare API側で一意性が保証されないため、作成前にWorkerが`SearchCatalogObjects`で重複チェックする。**
 
 ---
 
@@ -70,7 +70,7 @@ Web プロトタイプ＝「動く仕様書」。中核パイプラインはヘ�
 ## 04. データモデル（Supabase スキーマ・草案）
 
 最初から `store_id` でスコープ ＝ 1店舗でも将来のマルチテナントでも同じ形。
-**必須項目は「管理番号（SKU）」「商品名（+SKU）」「金額」の3つのみ**。対象・カテゴリ・サイズ・コンディション・採寸・写真はすべて任意で、登録後にいつでも追記・編集できる。
+**必須項目は「管理番号（SKU）」「商品名」「金額」の3つのみ**。対象・カテゴリ・サイズ・コンディション・採寸・写真はすべて任意で、登録後にいつでも追記・編集できる。
 
 ```sql
 -- 企業・店舗（小規模運用を前提に1テーブルで管理）
@@ -81,7 +81,7 @@ items        (item_id, store_id→stores.store_id, status['draft'|'confirmed'|'p
               mgmt_no NOT NULL（スタッフの手入力、SKUとして利用。UNIQUE(store_id, mgmt_no)で店舗内の重複を禁止。
                           数字のみの想定だが先頭ゼロ（例：01041）を保持するため型は文字列のまま、
                           入力欄はtype="text"＋inputMode="numeric"とし、0〜9以外の入力を拒否する）,
-              title NOT NULL（商品名。Square登録時は "title + mgmt_no" で表示タイトルを組み立てる）,
+              title NOT NULL（商品名。Squareの商品名にはtitleだけを登録し、mgmt_noはSKUとして別項目へ登録する）,
               price NOT NULL（円の整数。入力欄は0〜9のみ許可）,
               gender['mens'|'womens'|'unisex'], category, square_category_id, size  -- NULL可（後から追記可）,
               condition NULL可（既定値NULL＝「後で設定」）,
@@ -151,7 +151,7 @@ SaaS 化で “変わる所” は薄い層に閉じ込め、コスト源は先�
 
 ### Phase 1 の作業ブロック
 1. **最小商品登録（最優先）**：必須入力を「管理番号（SKU、手入力）」「商品名」「金額」の3項目のみに絞り、これだけでSquareへ作成できるルートを通す。対象・カテゴリ・サイズ・写真・採寸4項目・コンディションはすべて未入力でよい。
-2. **Square 最小連携**：トークンを秘匿するCloudflare WorkerからSquare Catalog APIへ商品を作成する。作成前に`SearchCatalogObjects`でSKU重複チェックを行い、Square側の商品タイトルは「商品名 + SKU（管理番号）」を組み合わせて生成する。通信断で作成結果だけ失われた場合はSKUを再照会して作成済みIDを復旧する。
+2. **Square 最小連携**：トークンを秘匿するCloudflare WorkerからSquare Catalog APIへ商品を作成する。作成前に`SearchCatalogObjects`でSKU重複チェックを行い、Square側の商品名には商品名だけを登録し、管理番号はバリエーションのSKUへ登録する。通信断で作成結果だけ失われた場合はSKUを再照会して作成済みIDを復旧する。
 3. **写真アップロード＋自動採寸（同フェーズ内で追加）**：スマホの標準カメラで撮った正面写真をWebフォームからアップロード→アップロード後にマーカー検出・遠近補正・自動採寸を実行→結果を確認・修正。ライブ撮影ガイド（リアルタイム表示）はこの段階では実装しない（Phase 3のネイティブ化で対応）。
 4. **後追い編集**：対象・カテゴリ・サイズ・写真・採寸・コンディションは商品登録後いつでも追記・修正でき、更新時にSquare側の商品情報（タイトル・説明文・画像）も反映する。写真削除はSquare画像→R2→Supabaseの順で処理する。
 
@@ -163,13 +163,22 @@ SaaS 化で “変わる所” は薄い層に閉じ込め、コスト源は先�
 
 | アプリ側 | Squareフィールド | 備考 |
 |---|---|---|
-| 商品名＋SKU | `CatalogItem.item_data.name` | 「商品名 + 管理番号」を連結（最大512文字） |
+| 商品名 | `CatalogItem.item_data.name` | 商品名だけを登録（最大512文字） |
 | 管理番号（SKU） | `CatalogItemVariation.item_variation_data.sku` | バリエーション側のフィールド |
 | 金額 | `CatalogItemVariation.item_variation_data.price_money`（`amount`+`currency`） | `pricing_type: FIXED_PRICING`とセット |
 
 商品は必ず1つ以上のバリエーションが必要 → ITEM（親）＋ITEM_VARIATION（子）を毎回セットで作成する。新規作成時は`#`始まりの一時IDを使い、レスポンスの`id_mappings`で本物のIDを取得して`items.square_object_id`に保存する。
 
-**将来「非公開作成→確認→公開」へ変更する場合**：現実装は`present_at_all_locations: true`で作成する。確認後公開フローにするには、作成時のロケーション設定と、公開時に`version`（楽観的排他制御）付きで再Upsertする処理を追加する。
+**販売範囲**：現実装は`present_at_all_locations: true`で作成し、Squareの全ロケーションで利用可能にする。ECサイトへの掲載可否はロケーション設定とは別で、Square Dashboardの商品初期設定に従う。
+
+**店舗・販売チャネル（2026-07-31調査）**：SquareロケーションはCatalogObjectの
+`present_at_all_locations`、`present_at_location_ids`、`absent_at_location_ids`で制御できる。
+一方、Square Onlineなどを表すCatalogItemの`channels`は読み取り専用であり、Channels APIも
+取得専用のBeta APIである。このため、公式APIだけで「POSのみ／ECのみ／両方」を完全に切り替える
+ことはできない。Square Dashboardの商品初期設定ではECチャネルを未選択にして、新規商品を
+POSレジだけで利用する。EC掲載が必要な商品だけ、登録後にSquare Dashboardの商品詳細または
+一括編集でECチャネルを追加する。初期設定の変更は既存商品には適用されない。
+詳細は`docs/square_location_channel_research.md`を参照。
 
 **SKU重複チェック（Square API側で一意性が保証されないため実装）**：Cloudflare Workerが`UpsertCatalogObject`を呼ぶ前に、`SearchCatalogObjects`を`object_types: ["ITEM_VARIATION"]`・`query.exact_query: {attribute_name: "sku", attribute_value: <mgmt_no>}`で呼び、既存SKUがヒットしたら登録を中断してスタッフにエラー表示する。
 

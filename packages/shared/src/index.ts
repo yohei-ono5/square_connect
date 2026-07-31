@@ -56,19 +56,14 @@ export const QuickRegisterInputSchema = z.object({
 export type QuickRegisterInput = z.infer<typeof QuickRegisterInputSchema>;
 
 // SKU入力と下書き保存を終えた後、WorkerからSquareへ登録する際の入力。
-export const RegisterToSquareInputSchema = z
-  .object({
-    mgmtNo: z.string().trim().min(1).max(100),
-    title: z.string().trim().min(1).max(512),
-    price: z.number().int().nonnegative().safe(),
-    categoryId: z.string().trim().min(1).max(255).nullable().optional(),
-    reportingCategoryId: z.string().trim().min(1).max(255).nullable().optional(),
-    hasPhotos: z.boolean().optional().default(false),
-  })
-  .refine(({ title, mgmtNo }) => `${title} ${mgmtNo}`.length <= 512, {
-    message: "Squareの商品名はSKUを含めて512文字以内にしてください",
-    path: ["title"],
-  });
+export const RegisterToSquareInputSchema = z.object({
+  mgmtNo: z.string().trim().min(1).max(100),
+  title: z.string().trim().min(1).max(512),
+  price: z.number().int().nonnegative().safe(),
+  categoryId: z.string().trim().min(1).max(255).nullable().optional(),
+  reportingCategoryId: z.string().trim().min(1).max(255).nullable().optional(),
+  hasPhotos: z.boolean().optional().default(false),
+});
 export type RegisterToSquareInput = z.infer<typeof RegisterToSquareInputSchema>;
 
 export type RegisterToSquareResult = {
