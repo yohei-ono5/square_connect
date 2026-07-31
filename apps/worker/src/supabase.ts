@@ -40,10 +40,26 @@ export type ActiveSquareItem = {
   square_deleted_at: string | null;
 };
 
+const ACTIVE_SQUARE_ITEM_COLUMNS =
+  "square_object_id,square_variation_id,mgmt_no,title,price,inventory_count,description,square_category_id,square_deleted_at";
+
+export async function getActiveSquareItem(
+  config: SupabaseConfig,
+  itemId: string,
+): Promise<ActiveSquareItem | null> {
+  const response = await supabaseRequest(
+    config,
+    `items?item_id=eq.${encodeURIComponent(itemId)}&deleted_at=is.null&square_object_id=not.is.null&select=${ACTIVE_SQUARE_ITEM_COLUMNS}&limit=1`,
+  );
+  const rows = (await response.json()) as Array<ActiveSquareItem & { square_object_id: string | null }>;
+  const row = rows[0];
+  return row?.square_object_id ? { ...row, square_object_id: row.square_object_id } : null;
+}
+
 export async function listActiveSquareItems(config: SupabaseConfig): Promise<ActiveSquareItem[]> {
   const response = await supabaseRequest(
     config,
-    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,inventory_count,description,square_category_id,square_deleted_at",
+    `items?deleted_at=is.null&square_object_id=not.is.null&select=${ACTIVE_SQUARE_ITEM_COLUMNS}`,
   );
   const rows = (await response.json()) as Array<ActiveSquareItem & { square_object_id: string | null }>;
   const items = new Map<string, ActiveSquareItem>();
@@ -170,7 +186,7 @@ export type SquareItemPatch = {
   square_version?: number;
   square_synced_at: string;
   square_deleted_at: string | null;
-  updated_at: string;
+  updated_at?: string;
 };
 
 export async function updateItemBySquareId(

@@ -307,7 +307,12 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         setItems((prev) => prev.map((item) => {
           if (item.id !== id) return item;
           if (latest.isDeleted) {
-            return { ...item, updatedAt: latest.syncedAt, squareSyncedAt: latest.syncedAt, squareDeletedAt: latest.syncedAt };
+            return {
+              ...item,
+              ...(latest.changed ? { updatedAt: latest.syncedAt } : {}),
+              squareSyncedAt: latest.syncedAt,
+              squareDeletedAt: latest.syncedAt,
+            };
           }
           return {
             ...item,
@@ -317,7 +322,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
             ...(latest.inventoryCount !== undefined ? { inventoryCount: latest.inventoryCount } : {}),
             description: latest.description,
             categoryId: latest.categoryId,
-            updatedAt: latest.syncedAt,
+            ...(latest.changed ? { updatedAt: latest.syncedAt } : {}),
             squareSyncedAt: latest.syncedAt,
             squareDeletedAt: null,
           };

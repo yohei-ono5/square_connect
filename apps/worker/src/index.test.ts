@@ -382,7 +382,17 @@ describe("POST /api/items/:id/register-to-square", () => {
   it("retrieves the exact Square item by its stored object ID and updates Supabase", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(squareResponse([{ square_object_id: "square-item-1" }]))
+      .mockResolvedValueOnce(squareResponse([{
+        square_object_id: "square-item-1",
+        square_variation_id: "square-variation-1",
+        mgmt_no: "T0001",
+        title: "更新前の商品",
+        price: 3000,
+        inventory_count: 1,
+        description: "更新前の説明",
+        square_category_id: "square-category-old",
+        square_deleted_at: null,
+      }]))
       .mockResolvedValueOnce(squareResponse({
         object: {
           type: "ITEM",
@@ -426,6 +436,7 @@ describe("POST /api/items/:id/register-to-square", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
+      changed: true,
       item: {
         squareObjectId: "square-item-1",
         isDeleted: false,
@@ -452,7 +463,67 @@ describe("POST /api/items/:id/register-to-square", () => {
       square_variation_id: "square-variation-1",
       square_version: 123,
       square_deleted_at: null,
+      updated_at: expect.any(String),
     });
+  });
+
+  it("updates only the Square sync time when the detail values have not changed", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{
+        square_object_id: "square-item-1",
+        square_variation_id: "square-variation-1",
+        mgmt_no: "T0111",
+        title: "更新商品",
+        price: 5100,
+        inventory_count: 1,
+        description: "同じ説明",
+        square_category_id: null,
+        square_deleted_at: null,
+      }]))
+      .mockResolvedValueOnce(squareResponse({
+        object: {
+          type: "ITEM",
+          id: "square-item-1",
+          version: 333,
+          item_data: {
+            name: "更新商品",
+            description: "同じ説明",
+            variations: [{
+              type: "ITEM_VARIATION",
+              id: "square-variation-1",
+              item_variation_data: {
+                sku: "T0111",
+                price_money: { amount: 5100, currency: "JPY" },
+              },
+            }],
+          },
+        },
+      }))
+      .mockResolvedValueOnce(squareResponse({
+        counts: [{
+          catalog_object_id: "square-variation-1",
+          location_id: "square-location-1",
+          state: "IN_STOCK",
+          quantity: "1",
+        }],
+      }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const response = await app.request(
+      "/api/items/item-1/sync-from-square",
+      { method: "POST" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ changed: false });
+    const patch = JSON.parse(String(fetchSpy.mock.calls[3][1]?.body));
+    expect(patch).toMatchObject({
+      square_synced_at: expect.any(String),
+      square_version: 333,
+    });
+    expect(patch).not.toHaveProperty("updated_at");
   });
 
   it("recovers created Square IDs when the upsert response is lost", async () => {
@@ -803,6 +874,7 @@ describe("POST /api/items/sync-active-from-square", () => {
       square_synced_at: expect.any(String),
       square_version: 333,
     });
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).not.toHaveProperty("updated_at");
   });
 });
 

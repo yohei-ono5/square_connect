@@ -282,6 +282,7 @@ export type SquareItemRefresh = {
   inventoryCount?: number;
   description: string | null;
   categoryId: string | null;
+  changed: boolean;
   syncedAt: string;
 };
 

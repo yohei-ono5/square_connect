@@ -21,6 +21,7 @@ import {
 import {
   createItemPhoto,
   deleteItemPhoto,
+  getActiveSquareItem,
   getItemPhoto,
   getItemSquareObjectId,
   getLastCatalogUpdatedAt,
@@ -106,13 +107,17 @@ function supabaseConfig(env: Bindings) {
   return { url: env.SUPABASE_URL, secretKey: env.SUPABASE_SECRET_KEY };
 }
 
-function squareSnapshotPatch(snapshot: SquareItemSnapshot, syncedAt: string): SquareItemPatch {
+function squareSnapshotPatch(
+  snapshot: SquareItemSnapshot,
+  syncedAt: string,
+  contentChanged = true,
+): SquareItemPatch {
   if (snapshot.isDeleted) {
     return {
       square_version: snapshot.version,
       square_synced_at: syncedAt,
       square_deleted_at: syncedAt,
-      updated_at: syncedAt,
+      ...(contentChanged ? { updated_at: syncedAt } : {}),
     };
   }
   return {
@@ -126,7 +131,7 @@ function squareSnapshotPatch(snapshot: SquareItemSnapshot, syncedAt: string): Sq
     square_version: snapshot.version,
     square_synced_at: syncedAt,
     square_deleted_at: null,
-    updated_at: syncedAt,
+    ...(contentChanged ? { updated_at: syncedAt } : {}),
   };
 }
 
@@ -134,6 +139,7 @@ async function updateSquareSnapshots(
   database: ReturnType<typeof supabaseConfig>,
   snapshots: SquareItemSnapshot[],
   syncedAt: string,
+  changedObjectIds: ReadonlySet<string>,
 ): Promise<void> {
   // Supabaseへ一度に大量接続しないよう、最大10件ずつ更新する。
   for (let offset = 0; offset < snapshots.length; offset += 10) {
@@ -142,7 +148,7 @@ async function updateSquareSnapshots(
         updateItemBySquareId(
           database,
           snapshot.squareObjectId,
-          squareSnapshotPatch(snapshot, syncedAt),
+          squareSnapshotPatch(snapshot, syncedAt, changedObjectIds.has(snapshot.squareObjectId)),
         ),
       ),
     );
@@ -642,7 +648,8 @@ app.post("/api/items/sync-active-from-square", async (c) => {
       const currentItem = currentItems.get(snapshot.squareObjectId);
       return currentItem ? hasSquareSnapshotChanged(currentItem, snapshot) : false;
     });
-    await updateSquareSnapshots(database, snapshots, syncedAt);
+    const changedObjectIds = new Set(changedSnapshots.map((snapshot) => snapshot.squareObjectId));
+    await updateSquareSnapshots(database, snapshots, syncedAt, changedObjectIds);
 
     const returnedIds = new Set(snapshots.map((snapshot) => snapshot.squareObjectId));
     return c.json({
@@ -671,10 +678,11 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
 
   try {
     const database = supabaseConfig(c.env);
-    const squareObjectId = await getItemSquareObjectId(database, itemId);
-    if (!squareObjectId) {
+    const currentItem = await getActiveSquareItem(database, itemId);
+    if (!currentItem) {
       return c.json({ error: "item_not_registered", message: "この商品はSquareに登録されていません" }, 409);
     }
+    const squareObjectId = currentItem.square_object_id;
 
     // Supabaseに保存済みのSquare商品IDだけを取得対象にし、SKU検索による別商品の
     // 誤更新を避ける。
@@ -688,26 +696,12 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
       : undefined;
     const snapshot = { ...catalogSnapshot, ...(inventoryCount !== undefined ? { inventoryCount } : {}) };
     const syncedAt = new Date().toISOString();
-    await updateItemBySquareId(database, squareObjectId, snapshot.isDeleted
-      ? {
-          square_version: snapshot.version,
-          square_synced_at: syncedAt,
-          square_deleted_at: syncedAt,
-          updated_at: syncedAt,
-        }
-      : {
-          ...(snapshot.mgmtNo ? { mgmt_no: snapshot.mgmtNo } : {}),
-          ...(snapshot.title ? { title: snapshot.title } : {}),
-          ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
-          ...(snapshot.inventoryCount !== undefined ? { inventory_count: snapshot.inventoryCount } : {}),
-          description: snapshot.description ?? null,
-          square_category_id: snapshot.categoryId ?? null,
-          ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
-          square_version: snapshot.version,
-          square_synced_at: syncedAt,
-          square_deleted_at: null,
-          updated_at: syncedAt,
-        });
+    const changed = hasSquareSnapshotChanged(currentItem, snapshot);
+    await updateItemBySquareId(
+      database,
+      squareObjectId,
+      squareSnapshotPatch(snapshot, syncedAt, changed),
+    );
 
     return c.json({
       item: {
@@ -720,6 +714,7 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
         description: snapshot.description ?? null,
         categoryId: snapshot.categoryId ?? null,
       },
+      changed,
       syncedAt,
     });
   } catch (error) {
