@@ -97,6 +97,20 @@ Squareの商品名には商品名だけを登録し、商品番号はバリエ�
 店舗が1件もない場合は、検証用の企業・店舗を自動作成する。
 現在の1社運用では、選択された店舗の`stores.company_name`を商品一覧の見出しに表示する。
 
+### Squareの販売チャネル運用
+
+Square Dashboardの「商品と在庫 → 商品 → 設定 → 商品の初期設定」で、
+オンラインチャネル「Rosso&Nero（赤と黒の店）」を未選択にして運用する。
+これにより、このアプリから登録した新規商品はPOSレジだけで利用し、ECサイトへは
+自動掲載しない。ECサイトへ掲載する商品は、Square登録後にSquare Dashboardの商品詳細または
+一括編集から対象のオンラインチャネルを選択する。
+
+現在のSquare公式APIでは、商品のオンラインチャネル割り当ては読み取り専用であり、
+このアプリからECサイトへの掲載・非掲載を変更できない。`present_at_all_locations`は
+Squareロケーションでの利用可否を表す設定で、ECサイトの公開設定ではない。
+Square側の初期設定を変更しても既存商品のチャネルは変わらないため、必要に応じて
+Square Dashboardで既存商品の販売チャネルも変更する。
+
 Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 をBuild variablesとして設定する。`VITE_SUPABASE_ANON_KEY`は既存の環境変数名を
 維持しているが、値にはLegacy `anon`ではなくSupabaseのPublishable keyを使用する。
