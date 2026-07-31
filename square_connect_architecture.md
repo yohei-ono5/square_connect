@@ -81,7 +81,7 @@ items        (item_id, store_id→stores.store_id, status['draft'|'confirmed'|'p
               mgmt_no NOT NULL（スタッフの手入力、SKUとして利用。UNIQUE(store_id, mgmt_no)で店舗内の重複を禁止。
                           数字のみの想定だが先頭ゼロ（例：01041）を保持するため型は文字列のまま、
                           入力欄はtype="text"＋inputMode="numeric"とし、0〜9以外の入力を拒否する）,
-              title NOT NULL（商品名。Square登録時は "title + mgmt_no" で表示タイトルを組み立てる）,
+              title NOT NULL（商品名。Squareの商品名にはtitleだけを登録し、mgmt_noはSKUとして別項目へ登録する）,
               price NOT NULL（円の整数。入力欄は0〜9のみ許可）,
               gender['mens'|'womens'|'unisex'], category, square_category_id, size  -- NULL可（後から追記可）,
               condition NULL可（既定値NULL＝「後で設定」）,
@@ -170,6 +170,13 @@ SaaS 化で “変わる所” は薄い層に閉じ込め、コスト源は先�
 商品は必ず1つ以上のバリエーションが必要 → ITEM（親）＋ITEM_VARIATION（子）を毎回セットで作成する。新規作成時は`#`始まりの一時IDを使い、レスポンスの`id_mappings`で本物のIDを取得して`items.square_object_id`に保存する。
 
 **将来「非公開作成→確認→公開」へ変更する場合**：現実装は`present_at_all_locations: true`で作成する。確認後公開フローにするには、作成時のロケーション設定と、公開時に`version`（楽観的排他制御）付きで再Upsertする処理を追加する。
+
+**店舗・販売チャネル（2026-07-31調査）**：SquareロケーションはCatalogObjectの
+`present_at_all_locations`、`present_at_location_ids`、`absent_at_location_ids`で制御できる。
+一方、Square Onlineなどを表すCatalogItemの`channels`は読み取り専用であり、Channels APIも
+取得専用のBeta APIである。このため、公式APIだけで「POSのみ／ECのみ／両方」を完全に切り替える
+ことはできない。まずPOS対象店舗の複数選択を実装し、EC公開はSquare Dashboardで行う方針を推奨する。
+詳細は`docs/square_location_channel_research.md`を参照。
 
 **SKU重複チェック（Square API側で一意性が保証されないため実装）**：Cloudflare Workerが`UpsertCatalogObject`を呼ぶ前に、`SearchCatalogObjects`を`object_types: ["ITEM_VARIATION"]`・`query.exact_query: {attribute_name: "sku", attribute_value: <mgmt_no>}`で呼び、既存SKUがヒットしたら登録を中断してスタッフにエラー表示する。
 

@@ -1,5 +1,4 @@
 import {
-  buildTitle,
   type RegisterToSquareInput,
   type RegisterToSquareResult,
   type UpdateSquareItemInput,
@@ -267,7 +266,7 @@ export async function registerItemInSquare(
           // 本番運用の「非公開作成→確認→公開」は、公開フロー確定時に切り替える。
           present_at_all_locations: true,
           item_data: {
-            name: buildTitle(input),
+            name: input.title,
             product_type: "REGULAR",
             ...(input.categoryId
               ? {
@@ -365,7 +364,7 @@ export async function updateItemInSquare(
 
   const updatedItemData = {
     ...item.item_data,
-    name: buildTitle(input),
+    name: input.title,
     description: input.description ?? "",
     variations: updatedVariations,
   };

@@ -292,7 +292,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       object: {
         present_at_all_locations: true,
         item_data: {
-          name: "ディズニー Tシャツ T0002",
+          name: "ディズニー Tシャツ",
           categories: [{ id: "square-category-tshirt" }],
           reporting_category: { id: "square-category-tops" },
           variations: [
@@ -770,7 +770,7 @@ describe("PATCH /api/items/:id/square", () => {
         id: "square-item-1",
         version: 123,
         item_data: {
-          name: "更新商品 T0002",
+          name: "更新商品",
           description: "更新説明",
           abbreviation: "OLD",
           categories: [{ id: "square-category-chino" }],
