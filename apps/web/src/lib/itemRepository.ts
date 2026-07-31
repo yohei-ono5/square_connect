@@ -410,6 +410,7 @@ export async function saveSquareRegistration(
   itemId: string,
   squareObjectId: string,
   squareVariationId: string,
+  description?: string,
 ): Promise<string> {
   const now = new Date().toISOString();
   const result = await getSupabase()
@@ -418,6 +419,7 @@ export async function saveSquareRegistration(
       status: "pushed",
       square_object_id: squareObjectId,
       square_variation_id: squareVariationId,
+      ...(description !== undefined ? { description } : {}),
       square_synced_at: now,
       updated_at: now,
     })
@@ -426,11 +428,11 @@ export async function saveSquareRegistration(
   return now;
 }
 
-export async function markItemSquareSynced(itemId: string): Promise<string> {
+export async function markItemSquareSynced(itemId: string, description: string): Promise<string> {
   const syncedAt = new Date().toISOString();
   const result = await getSupabase()
     .from("items")
-    .update({ square_synced_at: syncedAt, square_deleted_at: null })
+    .update({ description, square_synced_at: syncedAt, square_deleted_at: null })
     .eq("item_id", itemId);
   if (result.error) throw repositoryError("SQUARE_RESULT_SAVE", result.error);
   return syncedAt;

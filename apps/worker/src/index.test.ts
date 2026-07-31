@@ -317,6 +317,7 @@ describe("POST /api/items/:id/register-to-square", () => {
           mgmtNo: "T0002",
           title: "ディズニー Tシャツ",
           price: 3000,
+          description: "ディズニー Tシャツ\n\n商品説明",
           categoryId: "square-category-tshirt",
           reportingCategoryId: "square-category-tops",
         }),
@@ -346,6 +347,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         present_at_all_locations: true,
         item_data: {
           name: "ディズニー Tシャツ",
+          description: "ディズニー Tシャツ\n\n商品説明",
           categories: [{ id: "square-category-tshirt" }],
           reporting_category: { id: "square-category-tops" },
           variations: [

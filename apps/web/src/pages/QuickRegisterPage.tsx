@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { buildDescription } from "@square-connect/shared";
 import { useItems } from "../store/ItemsContext";
 import { WORKER_BASE_URL } from "../lib/config";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
@@ -128,6 +129,7 @@ export function QuickRegisterPage() {
         photoFiles,
       });
       temporaryItemId = item.id;
+      const squareDescription = buildDescription(item);
       const response = await fetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -136,6 +138,7 @@ export function QuickRegisterPage() {
           title: item.title,
           price: item.price,
           inventoryCount: item.inventoryCount,
+          description: squareDescription,
           categoryId: categoryId || undefined,
           reportingCategoryId: parentCategories.find(
             (parent) => parent.name === parentCategoryName,
@@ -162,7 +165,12 @@ export function QuickRegisterPage() {
       }
 
       squareRegistered = true;
-      await saveSquareRegistration(item.id, result.squareObjectId, result.squareVariationId);
+      await saveSquareRegistration(
+        item.id,
+        result.squareObjectId,
+        result.squareVariationId,
+        squareDescription,
+      );
       const warnings = [result.inventorySyncWarning, result.imageSyncWarning].filter(Boolean);
       navigate("/", {
         state: {

@@ -65,12 +65,17 @@ type ItemsContextValue = {
   discardItem: (id: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
   saveItem: (id: string, pendingPhotoDeletionIds?: string[]) => Promise<void>;
-  saveSquareRegistration: (id: string, squareObjectId: string, squareVariationId: string) => Promise<void>;
+  saveSquareRegistration: (
+    id: string,
+    squareObjectId: string,
+    squareVariationId: string,
+    description?: string,
+  ) => Promise<void>;
   syncPhotosToSquare: (id: string) => Promise<PhotoSquareSyncResult>;
   addPhoto: (id: string, role: PhotoRole, file: File) => Promise<void>;
   refreshActiveItemsFromSquare: () => Promise<SquareListRefreshResult>;
   refreshItemFromSquare: (id: string) => Promise<void>;
-  markSquareSynced: (id: string) => Promise<void>;
+  markSquareSynced: (id: string, description: string) => Promise<void>;
   isMgmtNoTaken: (mgmtNo: string, excludeId?: string) => boolean;
   squareCategories: SquareCategory[] | null;
   categoriesLoading: boolean;
@@ -248,8 +253,13 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
             }
           : candidate));
       },
-      saveSquareRegistration: async (id, squareObjectId, squareVariationId) => {
-        const syncedAt = await persistSquareRegistration(id, squareObjectId, squareVariationId);
+      saveSquareRegistration: async (id, squareObjectId, squareVariationId, description) => {
+        const syncedAt = await persistSquareRegistration(
+          id,
+          squareObjectId,
+          squareVariationId,
+          description,
+        );
         const storedPhotos = await listItemPhotos();
         setItems((prev) =>
           prev.map((item) =>
@@ -258,6 +268,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
                   ...item,
                   status: "pushed",
                   squareObjectId,
+                  ...(description !== undefined ? { description } : {}),
                   updatedAt: syncedAt,
                   squareSyncedAt: syncedAt,
                   squareDeletedAt: null,
@@ -319,10 +330,10 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           );
         }
       },
-      markSquareSynced: async (id) => {
-        const syncedAt = await markItemSquareSynced(id);
+      markSquareSynced: async (id, description) => {
+        const syncedAt = await markItemSquareSynced(id, description);
         setItems((prev) => prev.map((item) => item.id === id
-          ? { ...item, squareSyncedAt: syncedAt, squareDeletedAt: null }
+          ? { ...item, description, squareSyncedAt: syncedAt, squareDeletedAt: null }
           : item));
       },
       // 手入力のSKUが商品一覧内で既に使われていないかの事前チェック（Square側の重複チェックとは別に、

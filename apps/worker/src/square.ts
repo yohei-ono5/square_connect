@@ -302,6 +302,7 @@ export async function registerItemInSquare(
           present_at_all_locations: true,
           item_data: {
             name: input.title,
+            ...(input.description !== undefined ? { description: input.description } : {}),
             product_type: "REGULAR",
             ...(input.categoryId
               ? {

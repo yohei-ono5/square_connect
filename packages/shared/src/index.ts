@@ -63,6 +63,7 @@ export const RegisterToSquareInputSchema = z.object({
   title: z.string().trim().min(1).max(512),
   price: z.number().int().nonnegative().safe(),
   inventoryCount: z.number().int().min(0).max(999999).default(1),
+  description: z.string().max(4096).optional(),
   categoryId: z.string().trim().min(1).max(255).nullable().optional(),
   reportingCategoryId: z.string().trim().min(1).max(255).nullable().optional(),
   hasPhotos: z.boolean().optional().default(false),
@@ -77,7 +78,6 @@ export type RegisterToSquareResult = {
 export const UpdateSquareItemInputSchema = RegisterToSquareInputSchema.and(
   z.object({
     squareObjectId: z.string().trim().min(1).max(100),
-    description: z.string().max(4096).optional(),
   }),
 );
 export type UpdateSquareItemInput = z.infer<typeof UpdateSquareItemInputSchema>;
@@ -99,14 +99,10 @@ export const CONDITION_LABELS: Record<NonNullable<Condition>, string> = {
 };
 
 // Square側の商品説明・アプリの説明文プレビュー両方から使う。未設定の項目は行ごと省略する。
-export function buildTitle(item: Pick<Item, "title" | "mgmtNo">): string {
-  return `${item.title} ${item.mgmtNo}`;
-}
-
 export function buildDescription(
-  item: Pick<Item, "title" | "mgmtNo" | "size" | "condition" | "measurements">,
+  item: Pick<Item, "title" | "size" | "condition" | "measurements">,
 ): string {
-  const lines: string[] = [buildTitle(item), ""];
+  const lines: string[] = [item.title, ""];
 
   const m = item.measurements;
   const hasAnyMeasurement = m != null && Object.values(m).some((v) => v != null);

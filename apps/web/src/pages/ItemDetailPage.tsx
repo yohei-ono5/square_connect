@@ -329,6 +329,7 @@ export function ItemDetailPage() {
     setSavingAction("square");
     setSaveError(null);
     try {
+      const squareDescription = buildDescription(currentItem);
       await saveItem(id, pendingPhotoDeletionIds);
       if (currentItem.squareObjectId) {
         const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/square`, {
@@ -342,17 +343,17 @@ export function ItemDetailPage() {
             inventoryCount: currentItem.inventoryCount,
             categoryId: currentItem.categoryId,
             reportingCategoryId: selectedParentCategory?.id ?? null,
-            description: buildDescription(currentItem),
+            description: squareDescription,
           }),
         });
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
         if (!response.ok) throw new AppError("SQUARE_UPDATE", result, result?.message);
         const photoResult = await syncPhotosToSquare(id);
-        await markSquareSynced(id);
+        await markSquareSynced(id, squareDescription);
         setPendingPhotoDeletionIds([]);
         setSavedBaseline({
           itemId: id,
-          signature: editableItemSignature(currentItem),
+          signature: editableItemSignature({ ...currentItem, description: squareDescription }),
           photoDeletionSignature: "",
         });
         if (photoResult.deleted > 0 && photoResult.synced > 0) {
@@ -376,6 +377,7 @@ export function ItemDetailPage() {
             title: currentItem.title,
             price: currentItem.price,
             inventoryCount: currentItem.inventoryCount,
+            description: squareDescription,
             categoryId: currentItem.categoryId,
             reportingCategoryId: selectedParentCategory?.id ?? null,
             hasPhotos: activePhotoCount > 0,
@@ -397,7 +399,12 @@ export function ItemDetailPage() {
           }
           throw new AppError("SQUARE_REGISTER", result, result?.message);
         }
-        await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
+        await saveSquareRegistration(
+          id,
+          result.squareObjectId,
+          result.squareVariationId,
+          squareDescription,
+        );
         setPendingPhotoDeletionIds([]);
         const warnings = [result.inventorySyncWarning, result.imageSyncWarning].filter(Boolean);
         showToast(warnings.length > 0
@@ -1039,7 +1046,7 @@ export function ItemDetailPage() {
       {tab === "desc" && (
         <div className="content">
           <div className="description-heading">
-            <h2>自動で作成（Squareには反映されません）</h2>
+            <h2>自動で作成（Squareへの登録・更新時に反映されます）</h2>
             <button
               type="button"
               className="btn description-copy-btn"
