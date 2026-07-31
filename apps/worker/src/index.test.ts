@@ -13,6 +13,7 @@ const env = {
   } as unknown as R2Bucket,
   SQUARE_ACCESS_TOKEN: "sandbox-token",
   SQUARE_ENV: "sandbox",
+  SQUARE_LOCATION_ID: "square-location-1",
   SQUARE_WEBHOOK_SIGNATURE_KEY: "webhook-secret",
   SQUARE_WEBHOOK_NOTIFICATION_URL: "https://worker.example.com/api/webhooks/square",
   SUPABASE_URL: "https://project.supabase.co",
@@ -172,20 +173,20 @@ describe("item photo storage", () => {
     expect(r2Put).not.toHaveBeenCalled();
   });
 
-  it("deletes the Square catalog image before removing the R2 photo", async () => {
+  it("physically deletes temporary photos only for an unregistered item", async () => {
     const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
     const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
     const storagePath = `items/${itemId}/${itemPhotoId}.jpg`;
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{ square_object_id: null }]))
       .mockResolvedValueOnce(squareResponse([{
         item_photo_id: itemPhotoId,
         item_id: itemId,
         role: "main",
         storage_path: storagePath,
-        square_image_id: "square-image-1",
+        square_image_id: null,
       }]))
-      .mockResolvedValueOnce(squareResponse({ deleted_object_ids: ["square-image-1"] }))
       .mockResolvedValueOnce(squareResponse([]));
 
     const response = await app.request(
@@ -195,12 +196,63 @@ describe("item photo storage", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(fetchSpy.mock.calls[1][0]).toBe(
-      "https://connect.squareupsandbox.com/v2/catalog/object/square-image-1",
-    );
-    expect(fetchSpy.mock.calls[1][1]?.method).toBe("DELETE");
     expect(r2Delete).toHaveBeenCalledWith(storagePath);
     expect(fetchSpy.mock.calls[2][0]).toContain(`item_photos?item_id=eq.${itemId}&item_photo_id=eq.${itemPhotoId}`);
+  });
+
+  it("rejects immediate deletion for a Square-registered item", async () => {
+    const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
+    const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{ square_object_id: "square-item-1" }]));
+
+    const response = await app.request(
+      `/api/items/${itemId}/photos/${itemPhotoId}`,
+      { method: "DELETE" },
+      env,
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "registered_photo_requires_square_update" });
+    expect(r2Delete).not.toHaveBeenCalled();
+  });
+
+  it("applies pending photo deletion on Square update and retains the R2 original", async () => {
+    const itemId = "7d616551-670b-4fe9-88d1-3a32ab423b20";
+    const itemPhotoId = "a8ae5959-69c9-4d25-b369-d27bfeb52bd8";
+    const storagePath = `items/${itemId}/${itemPhotoId}.jpg`;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{ square_object_id: "square-item-1" }]))
+      .mockResolvedValueOnce(squareResponse([{
+        item_photo_id: itemPhotoId,
+        item_id: itemId,
+        role: "main",
+        storage_path: storagePath,
+        square_image_id: "square-image-1",
+        pending_delete_at: "2026-07-31T08:00:00.000Z",
+        deleted_at: null,
+      }]))
+      .mockResolvedValueOnce(squareResponse({ deleted_object_ids: ["square-image-1"] }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const response = await app.request(
+      `/api/items/${itemId}/photos/sync-to-square`,
+      { method: "POST" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ synced: 0, deleted: 1 });
+    expect(fetchSpy.mock.calls[2][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/catalog/object/square-image-1",
+    );
+    expect(fetchSpy.mock.calls[3][0]).toContain(`item_photos?item_id=eq.${itemId}`);
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toMatchObject({
+      pending_delete_at: null,
+      deleted_at: expect.any(String),
+    });
+    expect(r2Delete).not.toHaveBeenCalled();
   });
 });
 
@@ -253,7 +305,8 @@ describe("POST /api/items/:id/register-to-square", () => {
             { client_object_id: "#variation", object_id: "square-variation-1" },
           ],
         }),
-      );
+      )
+      .mockResolvedValueOnce(squareResponse({ counts: [] }));
 
     const response = await app.request(
       "/api/items/7d61/register-to-square",
@@ -277,7 +330,7 @@ describe("POST /api/items/:id/register-to-square", () => {
       squareVariationId: "square-variation-1",
     });
     // 写真が添付されていないため、Supabaseの写真取得やSquare画像同期は行わない。
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
 
     const [searchUrl, searchInit] = fetchSpy.mock.calls[0];
     expect(searchUrl).toBe("https://connect.squareupsandbox.com/v2/catalog/search");
@@ -300,12 +353,27 @@ describe("POST /api/items/:id/register-to-square", () => {
               present_at_all_locations: true,
               item_variation_data: {
                 sku: "T0002",
+                track_inventory: true,
                 price_money: { amount: 3000, currency: "JPY" },
               },
             },
           ],
         },
       },
+    });
+    expect(fetchSpy.mock.calls[2][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+    );
+    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+      changes: [{
+        type: "PHYSICAL_COUNT",
+        physical_count: {
+          catalog_object_id: "square-variation-1",
+          location_id: "square-location-1",
+          quantity: "1",
+          state: "IN_STOCK",
+        },
+      }],
     });
   });
 
@@ -338,6 +406,14 @@ describe("POST /api/items/:id/register-to-square", () => {
           },
         },
       }))
+      .mockResolvedValueOnce(squareResponse({
+        counts: [{
+          catalog_object_id: "square-variation-1",
+          location_id: "square-location-1",
+          state: "IN_STOCK",
+          quantity: "2",
+        }],
+      }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     const response = await app.request(
@@ -354,6 +430,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         mgmtNo: "T0100",
         title: "更新後の商品",
         price: 4500,
+        inventoryCount: 2,
         description: "Squareで更新した説明",
         categoryId: "square-category-tshirt",
       },
@@ -362,10 +439,12 @@ describe("POST /api/items/:id/register-to-square", () => {
       "https://connect.squareupsandbox.com/v2/catalog/object/square-item-1?include_related_objects=true",
     );
     expect(fetchSpy.mock.calls[1][1]?.method).toBe("GET");
-    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+    expect(fetchSpy.mock.calls[2][0]).toContain("/v2/inventory/square-variation-1");
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toMatchObject({
       mgmt_no: "T0100",
       title: "更新後の商品",
       price: 4500,
+      inventory_count: 2,
       description: "Squareで更新した説明",
       square_category_id: "square-category-tshirt",
       square_variation_id: "square-variation-1",
@@ -422,6 +501,7 @@ describe("POST /api/items/:id/register-to-square", () => {
           { client_object_id: "#variation", object_id: "square-variation-1" },
         ],
       }))
+      .mockResolvedValueOnce(squareResponse({ counts: [] }))
       .mockResolvedValueOnce(squareResponse([{
         item_photo_id: itemPhotoId,
         item_id: itemId,
@@ -455,16 +535,16 @@ describe("POST /api/items/:id/register-to-square", () => {
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).object.item_data)
       .not.toHaveProperty("reporting_category");
     expect(r2Get).toHaveBeenCalledWith(storagePath);
-    expect(fetchSpy.mock.calls[3][0]).toBe("https://connect.squareupsandbox.com/v2/catalog/images");
-    const imageForm = fetchSpy.mock.calls[3][1]?.body as FormData;
+    expect(fetchSpy.mock.calls[4][0]).toBe("https://connect.squareupsandbox.com/v2/catalog/images");
+    const imageForm = fetchSpy.mock.calls[4][1]?.body as FormData;
     expect(imageForm).toBeInstanceOf(FormData);
     expect(JSON.parse(String(imageForm.get("request")))).toMatchObject({
       object_id: "square-item-1",
       is_primary: true,
       idempotency_key: `square-connect-image-${itemPhotoId}`,
     });
-    expect(fetchSpy.mock.calls[4][0]).toContain(`item_photos?item_photo_id=eq.${itemPhotoId}`);
-    expect(JSON.parse(String(fetchSpy.mock.calls[4][1]?.body))).toEqual({ square_image_id: "square-image-1" });
+    expect(fetchSpy.mock.calls[5][0]).toContain(`item_photos?item_photo_id=eq.${itemPhotoId}`);
+    expect(JSON.parse(String(fetchSpy.mock.calls[5][1]?.body))).toEqual({ square_image_id: "square-image-1" });
   });
 
   it("returns the created item IDs with a warning when only image upload fails", async () => {
@@ -479,6 +559,7 @@ describe("POST /api/items/:id/register-to-square", () => {
         catalog_object: { id: "square-item-2" },
         id_mappings: [{ client_object_id: "#variation", object_id: "square-variation-2" }],
       }))
+      .mockResolvedValueOnce(squareResponse({ counts: [] }))
       .mockResolvedValueOnce(squareResponse([{
         item_photo_id: "a8ae5959-69c9-4d25-b369-d27bfeb52bd8",
         item_id: "item-2",
@@ -543,6 +624,7 @@ describe("POST /api/items/sync-active-from-square", () => {
           mgmt_no: "T0001",
           title: "更新前商品",
           price: 1000,
+          inventory_count: 1,
           description: null,
           square_deleted_at: null,
         },
@@ -552,6 +634,7 @@ describe("POST /api/items/sync-active-from-square", () => {
           mgmt_no: "T0002",
           title: "削除対象商品",
           price: 2000,
+          inventory_count: 1,
           description: null,
           square_deleted_at: null,
         },
@@ -583,6 +666,14 @@ describe("POST /api/items/sync-active-from-square", () => {
           },
         ],
       }))
+      .mockResolvedValueOnce(squareResponse({
+        counts: [{
+          catalog_object_id: "square-variation-1",
+          location_id: "square-location-1",
+          state: "IN_STOCK",
+          quantity: "1",
+        }],
+      }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
 
@@ -601,7 +692,7 @@ describe("POST /api/items/sync-active-from-square", () => {
       missing: 0,
     });
     expect(fetchSpy.mock.calls[0][0]).toBe(
-      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_category_id,square_deleted_at",
+      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,inventory_count,description,square_category_id,square_deleted_at",
     );
     expect(fetchSpy.mock.calls[1][0]).toBe(
       "https://connect.squareupsandbox.com/v2/catalog/batch-retrieve",
@@ -611,7 +702,10 @@ describe("POST /api/items/sync-active-from-square", () => {
       include_related_objects: false,
       include_deleted_objects: true,
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+    expect(fetchSpy.mock.calls[2][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/inventory/counts/batch-retrieve",
+    );
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toMatchObject({
       mgmt_no: "T0111",
       title: "更新商品",
       price: 5100,
@@ -620,10 +714,10 @@ describe("POST /api/items/sync-active-from-square", () => {
       square_version: 111,
       square_deleted_at: null,
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toMatchObject({
+    expect(JSON.parse(String(fetchSpy.mock.calls[4][1]?.body))).toMatchObject({
       square_version: 222,
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body)).square_deleted_at).toEqual(expect.any(String));
+    expect(JSON.parse(String(fetchSpy.mock.calls[4][1]?.body)).square_deleted_at).toEqual(expect.any(String));
   });
 
   it("does not contact Square when there are no active registered items", async () => {
@@ -655,6 +749,7 @@ describe("POST /api/items/sync-active-from-square", () => {
         mgmt_no: "T0111",
         title: "更新商品",
         price: 5100,
+        inventory_count: 1,
         description: "同じ説明",
         square_deleted_at: null,
       }]))
@@ -677,6 +772,14 @@ describe("POST /api/items/sync-active-from-square", () => {
           },
         }],
       }))
+      .mockResolvedValueOnce(squareResponse({
+        counts: [{
+          catalog_object_id: "square-variation-1",
+          location_id: "square-location-1",
+          state: "IN_STOCK",
+          quantity: "1",
+        }],
+      }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     const response = await app.request(
@@ -693,8 +796,8 @@ describe("POST /api/items/sync-active-from-square", () => {
       deleted: 0,
       missing: 0,
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toMatchObject({
       square_synced_at: expect.any(String),
       square_version: 333,
     });
@@ -736,7 +839,8 @@ describe("PATCH /api/items/:id/square", () => {
           },
         }),
       )
-      .mockResolvedValueOnce(squareResponse({ catalog_object: { id: "square-item-1" } }));
+      .mockResolvedValueOnce(squareResponse({ catalog_object: { id: "square-item-1" } }))
+      .mockResolvedValueOnce(squareResponse({ counts: [] }));
 
     const response = await app.request(
       "/api/items/item-1/square",
@@ -748,6 +852,7 @@ describe("PATCH /api/items/:id/square", () => {
           mgmtNo: "T0002",
           title: "更新商品",
           price: 3500,
+          inventoryCount: 3,
           categoryId: "square-category-chino",
           reportingCategoryId: "square-category-pants",
           description: "更新説明",
@@ -781,6 +886,7 @@ describe("PATCH /api/items/:id/square", () => {
               item_variation_data: {
                 name: "通常",
                 sku: "T0002",
+                track_inventory: true,
                 price_money: { amount: 3500, currency: "JPY" },
                 stockable: true,
               },
@@ -788,6 +894,18 @@ describe("PATCH /api/items/:id/square", () => {
           ],
         },
       },
+    });
+    expect(fetchSpy.mock.calls[2][0]).toBe(
+      "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+    );
+    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toMatchObject({
+      changes: [{
+        physical_count: {
+          catalog_object_id: "square-variation-1",
+          location_id: "square-location-1",
+          quantity: "3",
+        },
+      }],
     });
   });
 });

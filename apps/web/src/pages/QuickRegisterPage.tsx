@@ -29,6 +29,7 @@ export function QuickRegisterPage() {
   const [mgmtNo, setMgmtNo] = useState("");
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
+  const [inventoryCount, setInventoryCount] = useState("1");
   const [parentCategoryName, setParentCategoryName] = useState("");
   const [category, setCategory] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -48,7 +49,12 @@ export function QuickRegisterPage() {
     [items, parentCategoryName, squareCategories],
   );
 
-  const canSubmit = mgmtNo.trim().length > 0 && title.trim().length > 0 && price.trim().length > 0 && !submitting;
+  const canSubmit =
+    mgmtNo.trim().length > 0
+    && title.trim().length > 0
+    && price.trim().length > 0
+    && inventoryCount.trim().length > 0
+    && !submitting;
   const photoPreviewUrls = useMemo(
     () => photoFiles.map((file) => URL.createObjectURL(file)),
     [photoFiles],
@@ -86,6 +92,7 @@ export function QuickRegisterPage() {
         mgmtNo: mgmtNo.trim(),
         title: title.trim(),
         price: Number(price),
+        inventoryCount: Number(inventoryCount),
         category: category || null,
         categoryId: categoryId || null,
         photoFiles,
@@ -115,6 +122,7 @@ export function QuickRegisterPage() {
         mgmtNo: mgmtNo.trim(),
         title: title.trim(),
         price: Number(price),
+        inventoryCount: Number(inventoryCount),
         category: category || null,
         categoryId: categoryId || null,
         photoFiles,
@@ -127,6 +135,7 @@ export function QuickRegisterPage() {
           mgmtNo: item.mgmtNo,
           title: item.title,
           price: item.price,
+          inventoryCount: item.inventoryCount,
           categoryId: categoryId || undefined,
           reportingCategoryId: parentCategories.find(
             (parent) => parent.name === parentCategoryName,
@@ -141,6 +150,7 @@ export function QuickRegisterPage() {
             error?: string;
             message?: string;
             imageSyncWarning?: string;
+            inventorySyncWarning?: string;
           }
         | null;
 
@@ -153,10 +163,11 @@ export function QuickRegisterPage() {
 
       squareRegistered = true;
       await saveSquareRegistration(item.id, result.squareObjectId, result.squareVariationId);
+      const warnings = [result.inventorySyncWarning, result.imageSyncWarning].filter(Boolean);
       navigate("/", {
         state: {
-          notice: result.imageSyncWarning ?? "Squareに登録しました",
-          noticeType: result.imageSyncWarning ? "warning" : "success",
+          notice: warnings.length > 0 ? warnings.join("\n") : "Squareに登録しました",
+          noticeType: warnings.length > 0 ? "warning" : "success",
         },
       });
     } catch (error) {
@@ -269,6 +280,22 @@ export function QuickRegisterPage() {
               }}
               required
             />
+          </div>
+          <div className="field">
+            <label htmlFor="inventoryCount">在庫数</label>
+            <input
+              id="inventoryCount"
+              className="input"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={inventoryCount}
+              onChange={(e) => {
+                if (/^\d{0,6}$/.test(e.target.value)) setInventoryCount(e.target.value);
+              }}
+              required
+            />
+            <p className="hint">古着の一点物を想定し、初期値は1です。</p>
           </div>
         </section>
 

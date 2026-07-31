@@ -70,6 +70,7 @@ function editableItemSignature(item: MockItem): string {
     mgmtNo: item.mgmtNo,
     title: item.title,
     price: item.price,
+    inventoryCount: item.inventoryCount,
     gender: item.gender,
     category: item.category,
     categoryId: item.categoryId,
@@ -99,7 +100,6 @@ export function ItemDetailPage() {
     refreshItemFromSquare,
     markSquareSynced,
     addPhoto,
-    removePhoto,
     isMgmtNoTaken,
     items,
     squareCategories,
@@ -121,12 +121,24 @@ export function ItemDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [pendingPhotoDeletionIds, setPendingPhotoDeletionIds] = useState<string[]>([]);
+  const [photoDeleteCandidateId, setPhotoDeleteCandidateId] = useState<string | null>(null);
   const [descriptionCopyState, setDescriptionCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [customSizeSelected, setCustomSizeSelected] = useState(false);
-  const [savedBaseline, setSavedBaseline] = useState<{ itemId: string; signature: string } | null>(null);
+  const [savedBaseline, setSavedBaseline] = useState<{
+    itemId: string;
+    signature: string;
+    photoDeletionSignature: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const automaticSquareRefreshRef = useRef<{ squareObjectId: string; requestedAt: number } | null>(null);
   const saving = savingAction !== null;
+  const persistedPhotoDeletionSignature = item
+    ? item.photos.filter((photo) => photo.pendingDelete).map((photo) => photo.id).sort().join(",")
+    : "";
+  const photoDeletionDraftSignature = [...pendingPhotoDeletionIds].sort().join(",");
+  const hasLocalPhotoDeletionChanges =
+    Boolean(item) && persistedPhotoDeletionSignature !== photoDeletionDraftSignature;
   const parentCategories = useMemo(
     () => sortParentCategoriesForRegistration(squareCategories ?? [], items),
     [items, squareCategories],
@@ -171,17 +183,34 @@ export function ItemDetailPage() {
       setSavedBaseline(null);
       return;
     }
-    setSavedBaseline({ itemId: item.id, signature: editableItemSignature(item) });
+    setSavedBaseline({
+      itemId: item.id,
+      signature: editableItemSignature(item),
+      photoDeletionSignature: item.photos
+        .filter((photo) => photo.pendingDelete)
+        .map((photo) => photo.id)
+        .sort()
+        .join(","),
+    });
     // 入力中はupdatedAtが変わらず、保存またはSquareから再取得した時だけ基準を更新する。
   }, [item?.id, item?.updatedAt]);
 
   useEffect(() => {
     setCustomSizeSelected(false);
+    setPendingPhotoDeletionIds(
+      item?.photos.filter((photo) => photo.pendingDelete).map((photo) => photo.id) ?? [],
+    );
+    setPhotoDeleteCandidateId(null);
   }, [item?.id]);
 
   useEffect(() => {
     const squareObjectId = item?.squareObjectId;
-    if (!id || !squareObjectId || squareSyncStatus !== "reflected") return;
+    if (
+      !id
+      || !squareObjectId
+      || squareSyncStatus !== "reflected"
+      || hasLocalPhotoDeletionChanges
+    ) return;
 
     const refreshIfStale = () => {
       if (document.visibilityState === "hidden" || refreshingSquare) return;
@@ -211,7 +240,14 @@ export function ItemDetailPage() {
       window.removeEventListener("focus", refreshIfStale);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [id, item?.squareObjectId, squareSyncStatus, refreshItemFromSquare, refreshingSquare]);
+  }, [
+    id,
+    item?.squareObjectId,
+    squareSyncStatus,
+    refreshItemFromSquare,
+    refreshingSquare,
+    hasLocalPhotoDeletionChanges,
+  ]);
 
   if (!item && itemsLoading) {
     return (
@@ -246,7 +282,10 @@ export function ItemDetailPage() {
         : CUSTOM_SIZE_VALUE;
   const hasUnsavedChanges =
     savedBaseline?.itemId === currentItem.id &&
-    savedBaseline.signature !== editableItemSignature(currentItem);
+    (
+      savedBaseline.signature !== editableItemSignature(currentItem)
+      || savedBaseline.photoDeletionSignature !== photoDeletionDraftSignature
+    );
   const hasPendingSquareChanges =
     currentItem.squareObjectId === null ||
     hasUnsavedChanges ||
@@ -276,7 +315,7 @@ export function ItemDetailPage() {
     setSavingAction("draft");
     setSaveError(null);
     try {
-      await saveItem(id);
+      await saveItem(id, pendingPhotoDeletionIds);
       showToast("下書きを保存しました。Squareには反映されていません");
     } catch (error) {
       setSaveError(toUserErrorMessage(error, "ITEM_SAVE"));
@@ -290,7 +329,7 @@ export function ItemDetailPage() {
     setSavingAction("square");
     setSaveError(null);
     try {
-      await saveItem(id);
+      await saveItem(id, pendingPhotoDeletionIds);
       if (currentItem.squareObjectId) {
         const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/square`, {
           method: "PATCH",
@@ -300,6 +339,7 @@ export function ItemDetailPage() {
             mgmtNo: currentItem.mgmtNo,
             title: currentItem.title,
             price: currentItem.price,
+            inventoryCount: currentItem.inventoryCount,
             categoryId: currentItem.categoryId,
             reportingCategoryId: selectedParentCategory?.id ?? null,
             description: buildDescription(currentItem),
@@ -307,10 +347,27 @@ export function ItemDetailPage() {
         });
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
         if (!response.ok) throw new AppError("SQUARE_UPDATE", result, result?.message);
-        const syncedPhotos = await syncPhotosToSquare(id);
+        const photoResult = await syncPhotosToSquare(id);
         await markSquareSynced(id);
-        showToast(syncedPhotos > 0 ? `写真${syncedPhotos}枚を含めてSquareを更新しました` : "Squareを更新しました");
+        setPendingPhotoDeletionIds([]);
+        setSavedBaseline({
+          itemId: id,
+          signature: editableItemSignature(currentItem),
+          photoDeletionSignature: "",
+        });
+        if (photoResult.deleted > 0 && photoResult.synced > 0) {
+          showToast(`写真${photoResult.synced}枚を追加し、${photoResult.deleted}枚をSquareから削除しました`);
+        } else if (photoResult.deleted > 0) {
+          showToast(`写真${photoResult.deleted}枚をSquareから削除しました`);
+        } else if (photoResult.synced > 0) {
+          showToast(`写真${photoResult.synced}枚を含めてSquareを更新しました`);
+        } else {
+          showToast("Squareを更新しました");
+        }
       } else {
+        const activePhotoCount = currentItem.photos.filter(
+          (photo) => !pendingPhotoDeletionIds.includes(photo.id),
+        ).length;
         const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -318,9 +375,10 @@ export function ItemDetailPage() {
             mgmtNo: currentItem.mgmtNo,
             title: currentItem.title,
             price: currentItem.price,
+            inventoryCount: currentItem.inventoryCount,
             categoryId: currentItem.categoryId,
             reportingCategoryId: selectedParentCategory?.id ?? null,
-            hasPhotos: currentItem.photos.length > 0,
+            hasPhotos: activePhotoCount > 0,
           }),
         });
         const result = (await response.json().catch(() => null)) as
@@ -330,6 +388,7 @@ export function ItemDetailPage() {
               error?: string;
               message?: string;
               imageSyncWarning?: string;
+              inventorySyncWarning?: string;
             }
           | null;
         if (!response.ok || !result?.squareObjectId || !result.squareVariationId) {
@@ -339,11 +398,13 @@ export function ItemDetailPage() {
           throw new AppError("SQUARE_REGISTER", result, result?.message);
         }
         await saveSquareRegistration(id, result.squareObjectId, result.squareVariationId);
-        showToast(
-          result.imageSyncWarning ?? (currentItem.photos.length > 0
+        setPendingPhotoDeletionIds([]);
+        const warnings = [result.inventorySyncWarning, result.imageSyncWarning].filter(Boolean);
+        showToast(warnings.length > 0
+          ? warnings.join("\n")
+          : activePhotoCount > 0
             ? "商品と写真をSquareへ登録し、Supabaseへ保存しました"
-            : "商品をSquareへ登録し、Supabaseへ保存しました"),
-        );
+            : "商品をSquareへ登録し、Supabaseへ保存しました");
       }
     } catch (error) {
       setSaveError(toUserErrorMessage(
@@ -382,17 +443,21 @@ export function ItemDetailPage() {
     }
   }
 
-  async function handleRemovePhoto(photoId: string) {
-    if (!id || photoBusy) return;
-    setPhotoBusy(true);
-    setPhotoError(null);
-    try {
-      await removePhoto(id, photoId);
-    } catch (error) {
-      setPhotoError(toUserErrorMessage(error, "PHOTO_DELETE"));
-    } finally {
-      setPhotoBusy(false);
+  function handleRemovePhoto(photoId: string) {
+    if (photoBusy) return;
+    if (pendingPhotoDeletionIds.includes(photoId)) {
+      setPendingPhotoDeletionIds((current) => current.filter((candidate) => candidate !== photoId));
+      return;
     }
+    setPhotoDeleteCandidateId(photoId);
+  }
+
+  function confirmPhotoDeletion() {
+    if (!photoDeleteCandidateId) return;
+    setPendingPhotoDeletionIds((current) =>
+      current.includes(photoDeleteCandidateId) ? current : [...current, photoDeleteCandidateId],
+    );
+    setPhotoDeleteCandidateId(null);
   }
 
   async function runAutoMeasure() {
@@ -498,12 +563,12 @@ export function ItemDetailPage() {
         <Link to="/" className="back-link">
           ← 商品一覧に戻る
         </Link>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-          <div>
+        <div className="item-detail-header-row">
+          <div className="item-detail-title">
             <p style={{ fontSize: 16, fontWeight: 500, margin: 0 }}>{item.title || "（商品名未設定）"}</p>
             <SquareCheckedAt item={item} className="item-detail-checked-at" />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+          <div className="item-detail-square-actions">
             <StatusBadge item={item} showCheckedAt={false} />
             {item.squareObjectId && (
               <button
@@ -538,9 +603,12 @@ export function ItemDetailPage() {
           <p className="field-heading">正面写真（採寸に使用）</p>
           <div className="photo-grid">
             {mainPhoto ? (
-              <div className="photo-slot filled">
+              <div className={`photo-slot filled ${pendingPhotoDeletionIds.includes(mainPhoto.id) ? "pending-delete" : ""}`}>
                 <img src={mainPhoto.previewUrl} alt="正面" />
                 <span className="photo-slot-label">正面</span>
+                {pendingPhotoDeletionIds.includes(mainPhoto.id) && (
+                  <span className="photo-delete-status">削除予定</span>
+                )}
                 <button
                   type="button"
                   className="btn"
@@ -548,7 +616,7 @@ export function ItemDetailPage() {
                   onClick={() => handleRemovePhoto(mainPhoto.id)}
                   disabled={photoBusy}
                 >
-                  削除
+                  {pendingPhotoDeletionIds.includes(mainPhoto.id) ? "元に戻す" : "削除"}
                 </button>
               </div>
             ) : (
@@ -564,8 +632,14 @@ export function ItemDetailPage() {
           </p>
           <div className="photo-grid">
             {subPhotos.map((photo) => (
-              <div key={photo.id} className="photo-slot filled">
+              <div
+                key={photo.id}
+                className={`photo-slot filled ${pendingPhotoDeletionIds.includes(photo.id) ? "pending-delete" : ""}`}
+              >
                 <img src={photo.previewUrl} alt="追加写真" />
+                {pendingPhotoDeletionIds.includes(photo.id) && (
+                  <span className="photo-delete-status">削除予定</span>
+                )}
                 <button
                   type="button"
                   className="btn"
@@ -573,7 +647,7 @@ export function ItemDetailPage() {
                   onClick={() => handleRemovePhoto(photo.id)}
                   disabled={photoBusy}
                 >
-                  削除
+                  {pendingPhotoDeletionIds.includes(photo.id) ? "元に戻す" : "削除"}
                 </button>
               </div>
             ))}
@@ -585,6 +659,12 @@ export function ItemDetailPage() {
           <p className="hint">
             背面・タグ・襟元・ダメージなど、決まったカテゴリはありません。JPEG・PJPEG・PNG・GIF（各15MB以下）を保存できます。写真は0枚でも保存できます。
           </p>
+          {pendingPhotoDeletionIds.length > 0 && (
+            <p className="photo-delete-hint">
+              削除予定の写真はまだ削除されていません。下書き保存後もSquareと画像原本には残り、
+              「Squareを更新」を押した時にSquareへ反映されます。
+            </p>
+          )}
           {photoBusy && <p className="hint">写真を保存しています…</p>}
           {photoError && <p className="form-error">{photoError}</p>}
         </div>
@@ -869,6 +949,23 @@ export function ItemDetailPage() {
                 }}
               />
             </div>
+            <div className="field">
+              <label htmlFor="inventoryCount">在庫数</label>
+              <input
+                id="inventoryCount"
+                className="input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={item.inventoryCount}
+                onChange={(e) => {
+                  if (/^\d{0,6}$/.test(e.target.value)) {
+                    updateItem(id!, { inventoryCount: Number(e.target.value) || 0 });
+                  }
+                }}
+              />
+              <p className="hint">Squareの店舗在庫へ反映されます。</p>
+            </div>
           </section>
 
           <section className="basic-section">
@@ -962,11 +1059,10 @@ export function ItemDetailPage() {
         </div>
       )}
 
-      <div className="footer-bar">
+      <div className="footer-bar item-detail-footer">
         <button
           type="button"
-          className="btn btn-primary"
-          style={{ flex: 1 }}
+          className="btn btn-primary item-detail-footer-button"
           onClick={handleSaveDraft}
           disabled={saving || refreshingSquare || mgmtNoConflict || !hasUnsavedChanges}
         >
@@ -974,8 +1070,7 @@ export function ItemDetailPage() {
         </button>
         <button
           type="button"
-          className="btn"
-          style={{ flex: 1 }}
+          className="btn item-detail-footer-button"
           onClick={handleSaveToSquare}
           disabled={saving || refreshingSquare || mgmtNoConflict || !hasPendingSquareChanges}
         >
@@ -985,6 +1080,27 @@ export function ItemDetailPage() {
       {saveError && <p className="form-error" style={{ margin: "0 16px 12px" }}>{saveError}</p>}
       {navigationNotice && <p className="form-error" style={{ margin: "0 16px 12px" }}>{navigationNotice}</p>}
       {toast && <p className="toast">{toast}</p>}
+      {photoDeleteCandidateId && (
+        <div className="dialog-backdrop" role="presentation">
+          <div className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="photo-delete-title">
+            <h2 className="dialog-title" id="photo-delete-title">この写真を削除予定にしますか？</h2>
+            <p className="dialog-message">
+              保存するまではSquare・Square Connectのどちらからも削除されません。
+            </p>
+            <p className="dialog-note">
+              削除予定にした後も「元に戻す」で取り消せます。
+            </p>
+            <div className="dialog-actions">
+              <button type="button" className="btn" onClick={() => setPhotoDeleteCandidateId(null)}>
+                キャンセル
+              </button>
+              <button type="button" className="btn btn-primary" onClick={confirmPhotoDeletion}>
+                削除予定にする
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

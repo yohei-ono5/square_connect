@@ -7,7 +7,7 @@
 |---|---|
 | アプリ（先行） | **Webアプリ**（画像アップロード型、複数端末のブラウザから利用） |
 | アプリ（後続） | React Native（ストア審査等の手間があるため後回し） |
-| 必須項目 | **管理番号（SKU）・商品名・金額の3つのみ** |
+| 必須項目 | **管理番号（SKU）・商品名・金額・在庫数の4つ**（在庫数は既定値1） |
 | 任意項目 | 対象・カテゴリ・サイズ・コンディション・採寸・写真。未入力のままSquare登録を進め、後から追記・編集可 |
 | UIテーマ | 導入店舗の赤・黒に合わせ、アクセントカラーを **RGB(234, 51, 37) / `#EA3325`** に統一。主要ボタン等は赤地＋白文字 |
 | 言語 | **TypeScript**（フロント・サーバー共通） |
@@ -70,7 +70,7 @@ Web プロトタイプ＝「動く仕様書」。中核パイプラインはヘ�
 ## 04. データモデル（Supabase スキーマ・草案）
 
 最初から `store_id` でスコープ ＝ 1店舗でも将来のマルチテナントでも同じ形。
-**必須項目は「管理番号（SKU）」「商品名」「金額」の3つのみ**。対象・カテゴリ・サイズ・コンディション・採寸・写真はすべて任意で、登録後にいつでも追記・編集できる。
+**必須項目は「管理番号（SKU）」「商品名」「金額」「在庫数」の4つ**。在庫数は既定値1とする。対象・カテゴリ・サイズ・コンディション・採寸・写真はすべて任意で、登録後にいつでも追記・編集できる。
 
 ```sql
 -- 企業・店舗（小規模運用を前提に1テーブルで管理）
@@ -83,6 +83,7 @@ items        (item_id, store_id→stores.store_id, status['draft'|'confirmed'|'p
                           入力欄はtype="text"＋inputMode="numeric"とし、0〜9以外の入力を拒否する）,
               title NOT NULL（商品名。Squareの商品名にはtitleだけを登録し、mgmt_noはSKUとして別項目へ登録する）,
               price NOT NULL（円の整数。入力欄は0〜9のみ許可）,
+              inventory_count NOT NULL DEFAULT 1（0〜999999の整数。Square店舗在庫へ反映）,
               gender['mens'|'womens'|'unisex'], category, square_category_id, size  -- NULL可（後から追記可）,
               condition NULL可（既定値NULL＝「後で設定」）,
               m_shoulder, m_chest, m_length, m_sleeve  -- すべてNULL可（後から採寸・編集可）,
@@ -92,7 +93,8 @@ items        (item_id, store_id→stores.store_id, status['draft'|'confirmed'|'p
 -- 写真（正面=main は採寸トリガーとして特別扱い。それ以外は撮る/撮らないが商品次第なので
 -- 固定カテゴリを設けず sub として自由に何枚でも追加できる）— 0枚でも登録可、後から追加可
 item_photos  (item_photo_id, item_id→items.item_id, role['main'|'sub'],
-              storage_path, square_image_id, width, height, sort, created_at)
+              storage_path, square_image_id, width, height, sort,
+              pending_delete_at, deleted_at, created_at)
 
 -- Square同期（Secret keyを持つWorkerだけが操作）
 square_sync_state     (merchant_id, last_catalog_updated_at, updated_at)
@@ -105,7 +107,7 @@ square_webhook_events (square_event_id, event_type, received_at)
 -- Square トークンは Cloudflare Workers の秘密（Secrets）として保持（端末に置かない）
 -- gender / category / size / condition / 採寸4項目 / 写真は未設定のままでも Square へ登録・公開してよい
 -- category はSquareの商品分類へ反映する。size / condition は商品説明文へ反映し、gender は現時点ではSquareへ送信しない
--- 必須は mgmt_no（SKU）／ title（商品名）／ price（金額）の3つのみ
+-- 必須は mgmt_no（SKU）／ title（商品名）／ price（金額）／ inventory_count（在庫数）の4つ
 ```
 
 ---
@@ -150,22 +152,24 @@ SaaS 化で “変わる所” は薄い層に閉じ込め、コスト源は先�
 | **5** | ○ 後 | **SaaS 化** — Supabase Auth・店舗単位RLS・マルチテナント／課金／他店 OAuth・オンボーディング。 |
 
 ### Phase 1 の作業ブロック
-1. **最小商品登録（最優先）**：必須入力を「管理番号（SKU、手入力）」「商品名」「金額」の3項目のみに絞り、これだけでSquareへ作成できるルートを通す。対象・カテゴリ・サイズ・写真・採寸4項目・コンディションはすべて未入力でよい。
+1. **最小商品登録（最優先）**：必須入力を「管理番号（SKU、手入力）」「商品名」「金額」「在庫数」の4項目に絞り、在庫数は1を初期表示する。対象・カテゴリ・サイズ・写真・採寸4項目・コンディションはすべて未入力でよい。
 2. **Square 最小連携**：トークンを秘匿するCloudflare WorkerからSquare Catalog APIへ商品を作成する。作成前に`SearchCatalogObjects`でSKU重複チェックを行い、Square側の商品名には商品名だけを登録し、管理番号はバリエーションのSKUへ登録する。通信断で作成結果だけ失われた場合はSKUを再照会して作成済みIDを復旧する。
 3. **写真アップロード＋自動採寸（同フェーズ内で追加）**：スマホの標準カメラで撮った正面写真をWebフォームからアップロード→アップロード後にマーカー検出・遠近補正・自動採寸を実行→結果を確認・修正。ライブ撮影ガイド（リアルタイム表示）はこの段階では実装しない（Phase 3のネイティブ化で対応）。
-4. **後追い編集**：対象・カテゴリ・サイズ・写真・採寸・コンディションは商品登録後いつでも追記・修正でき、更新時にSquare側の商品情報（タイトル・説明文・画像）も反映する。写真削除はSquare画像→R2→Supabaseの順で処理する。
+4. **後追い編集**：対象・カテゴリ・サイズ・写真・採寸・コンディションは商品登録後いつでも追記・修正でき、更新時にSquare側の商品情報（タイトル・説明文・画像）も反映する。写真削除は画面内で削除予定にし、保存前は外部状態を変更しない。下書き保存で削除予定を保持し、Square更新時にSquare画像を削除してSupabaseを論理削除する。復元用のR2原本は保持する。
 
 ---
 
-## 06.5 Square Catalog API マッピング（最小登録の3項目）
+## 06.5 Square Catalog / Inventory API マッピング（最小登録の4項目）
 
-必須3項目 → Square Catalog APIのオブジェクト構造への対応。`POST /v2/catalog/object`（UpsertCatalogObject）を使用。
+必須4項目 → Square Catalog APIとInventory APIへの対応。商品は`POST /v2/catalog/object`、
+在庫数は`POST /v2/inventory/changes/batch-create`を使用する。
 
 | アプリ側 | Squareフィールド | 備考 |
 |---|---|---|
 | 商品名 | `CatalogItem.item_data.name` | 商品名だけを登録（最大512文字） |
 | 管理番号（SKU） | `CatalogItemVariation.item_variation_data.sku` | バリエーション側のフィールド |
 | 金額 | `CatalogItemVariation.item_variation_data.price_money`（`amount`+`currency`） | `pricing_type: FIXED_PRICING`とセット |
+| 在庫数 | Inventory API `PHYSICAL_COUNT.quantity` | バリエーションの`track_inventory: true`を設定し、対象店舗の`IN_STOCK`へ反映。既定値1 |
 
 商品は必ず1つ以上のバリエーションが必要 → ITEM（親）＋ITEM_VARIATION（子）を毎回セットで作成する。新規作成時は`#`始まりの一時IDを使い、レスポンスの`id_mappings`で本物のIDを取得して`items.square_object_id`に保存する。
 
@@ -192,13 +196,13 @@ POSレジだけで利用する。EC掲載が必要な商品だけ、登録後に
 
 ## 06.6 画面フロー（2026-07-16 改訂：登録優先型）
 
-必須3項目のみで即Square登録できる方針に合わせ、画面フローを「撮影→採寸→情報→Square」の一直線から、**「最小登録→即Square」を最初のゴールにし、写真・採寸・詳細情報は一覧からいつでも後追いできるループ構造**に変更する。旧フロー（撮影ガイド・リアルタイム判定含む）は[square_connect_plan.md](./docs/square_connect_plan.md)8〜9章・21章を参照（ネイティブ化フェーズ＝Phase 3で復活）。
+必須4項目のみで即Square登録できる方針に合わせ、画面フローを「撮影→採寸→情報→Square」の一直線から、**「最小登録→即Square」を最初のゴールにし、写真・採寸・詳細情報は一覧からいつでも後追いできるループ構造**に変更する。旧フロー（撮影ガイド・リアルタイム判定含む）は[square_connect_plan.md](./docs/square_connect_plan.md)8〜9章・21章を参照（ネイティブ化フェーズ＝Phase 3で復活）。
 
 ```text
 [商品一覧（ホーム）]
    │ ＋新規登録
    ▼
-[クイック登録] 商品番号（SKU、手入力）・商品名・金額を入力
+[クイック登録] 商品番号（SKU、手入力）・商品名・金額・在庫数（既定値1）を入力
    │ 任意で大カテゴリ→中カテゴリを選択（大カテゴリのみ／未設定も可）
    │ 「下書き保存」（Supabaseへ保存）／「Squareに登録」（SKU重複チェック→Square作成→保存）
    │   └─ Square失敗時：一時商品・一時写真を破棄し、入力内容を保ったまま画面に留まる
@@ -210,8 +214,8 @@ POSレジだけで利用する。EC掲載が必要な商品だけ、登録後に
    ▼
 [商品詳細編集]
    ├─ 写真アップロード（R2へ保存。正面はSquareのプライマリ画像、追加写真は通常画像として添付）
-   │     ├─ 写真追加：登録済み商品ならSquareへ自動同期
-   │     └─ 写真削除：Square画像→R2→Supabaseの順で削除
+   │     ├─ 写真追加：R2とSupabaseへ保存し、Square更新時にSquareへ同期
+   │     └─ 写真削除：削除予定→下書き保存→Square更新でSquare削除・DB論理削除（R2原本保持）
    │     └─ 正面写真アップロード時のみ：自動採寸（マーカー検出・遠近補正・4項目算出）→ 結果確認・修正
    ├─ 基本情報（対象・カテゴリ・サイズ）— 任意
    ├─ コンディション選択（未設定のままでも可）
@@ -231,11 +235,11 @@ POSレジだけで利用する。EC掲載が必要な商品だけ、登録後に
 1. ログインなし（テスト運用。URLを知っている利用者がアクセス可能。本運用前にスタッフ認証を追加）
 2. **商品一覧（ホーム）** — **2026-07-16再改訂：状態バッジ・フィルタ・統計はすべてSquare登録状況（Square登録済み／Square未登録）に統一**。詳細（写真・採寸・基本情報）が埋まっているかどうかのトラッキングは一旦廃止し、作り直す予定。＋新規登録ボタン。あわせて商品管理システム的な要素として、**統計サマリー**（総数／Square登録済み／Square未登録の3件）、**検索・絞り込み**（商品名・カテゴリ・SKUでのテキスト検索＋Square登録状況でのフィルタ）、**並べ替え**（**2026-07-16改訂：登録日時を実際には保持していなかった「登録が新しい/古い順」は廃止**。商品番号順（昇順・降順）・価格が安い/高い順・商品名のあいうえお順に変更）を備える。各行のSKU表記は「SKU」というラベルを付けず番号のみ表示する。
 
-**Square反映状態の判定**：`square_object_id`、`updated_at`、`square_synced_at`、`square_deleted_at`と、`item_photos.square_image_id`の有無から、`Square未登録`、`Square未反映`、`Square反映済み`、`Square側で削除済み`の4状態を算出する。登録済み商品を下書き保存した場合や未反映写真がある場合は`Square未反映`とし、Square更新または最新情報取得の成功後に`Square反映済み`へ戻す。この表示は永久的な一致保証ではなく、状態バッジの下に`Square最終確認日時`を併記する。Square側の変更は`catalog.version.updated` WebhookでSupabaseへ反映し、ブラウザへフォーカスが戻った際に一覧を自動再読込する。登録済みの商品詳細を開いた際と詳細画面へ戻った際は、30秒間の連続取得抑止を設けたうえで対象IDの最新値をSquareから自動取得し、手動取得ボタンも提供する。同期エラー履歴の表示と定期照合は未実装である。
-3. **クイック登録** — 商品番号（SKU）・商品名・金額の3つを必須入力とし、カテゴリと写真は任意とする（SKUはスタッフの手入力、金額は0〜9のみ入力可）。カテゴリはSquareの親子階層に合わせた「大カテゴリ→中カテゴリ」の2段階選択とし、大カテゴリだけ、または未設定でも登録できる。中カテゴリは選択した大カテゴリの配下だけを表示する。表示順は現在月から判定する季節との相性（春=3〜5月、夏=6〜8月、秋=9〜11月、冬=12〜2月）→商品一覧での利用回数→カテゴリ名の日本語順とし、大カテゴリは配下の評価を集約する。季節外（例：夏のダウン）は下位へ送る。選択したカテゴリ名とIDをSupabaseへ保存する。Square登録時、大カテゴリのみなら`CatalogItem.categories`と`reporting_category`の両方へ大カテゴリIDを設定し、中カテゴリを選んだ場合は`categories`へ中カテゴリID、`reporting_category`へ大カテゴリIDを設定する。「下書き保存」を押した場合だけSupabaseの下書きとして一覧へ残す。「Squareに登録」では処理用の商品・写真を一時保存するが、Square登録が失敗した場合は完全破棄し、入力値と選択画像を保持したまま画面に留まる。成功時だけSquare IDをSupabaseへ保存し、商品一覧へ遷移する。写真なしでは画像同期を行わず、写真ありで同期に失敗した場合だけ警告する。Square作成後に応答だけ失われた場合はSKU再照会でIDを復旧し、重複登録を防ぐ。入力金額はSquareのJPY固定価格へそのまま送り、アプリでは税計算や税ID設定を行わない。
+**Square反映状態の判定**：`square_object_id`、`updated_at`、`square_synced_at`、`square_deleted_at`と、`item_photos.square_image_id`、`pending_delete_at`から、`Square未登録`、`Square未反映`、`Square反映済み`、`Square側で削除済み`の4状態を算出する。登録済み商品を下書き保存した場合、未反映写真または削除予定写真がある場合は`Square未反映`とし、Square更新または最新情報取得の成功後に`Square反映済み`へ戻す。この表示は永久的な一致保証ではなく、状態バッジの下に`Square最終確認日時`を併記する。Square側の変更は`catalog.version.updated` WebhookでSupabaseへ反映し、ブラウザへフォーカスが戻った際に一覧を自動再読込する。登録済みの商品詳細を開いた際と詳細画面へ戻った際は、30秒間の連続取得抑止を設けたうえで対象IDの最新値をSquareから自動取得し、手動取得ボタンも提供する。同期エラー履歴の表示と定期照合は未実装である。
+3. **クイック登録** — 商品番号（SKU）・商品名・金額・在庫数の4つを必須入力とし、在庫数は1を初期表示する。カテゴリと写真は任意とする（SKUはスタッフの手入力、金額と在庫数は0〜9のみ入力可）。カテゴリはSquareの親子階層に合わせた「大カテゴリ→中カテゴリ」の2段階選択とし、大カテゴリだけ、または未設定でも登録できる。中カテゴリは選択した大カテゴリの配下だけを表示する。表示順は現在月から判定する季節との相性（春=3〜5月、夏=6〜8月、秋=9〜11月、冬=12〜2月）→商品一覧での利用回数→カテゴリ名の日本語順とし、大カテゴリは配下の評価を集約する。季節外（例：夏のダウン）は下位へ送る。選択したカテゴリ名とIDをSupabaseへ保存する。Square登録時、大カテゴリのみなら`CatalogItem.categories`と`reporting_category`の両方へ大カテゴリIDを設定し、中カテゴリを選んだ場合は`categories`へ中カテゴリID、`reporting_category`へ大カテゴリIDを設定する。在庫追跡を有効にし、Inventory APIで対象店舗の`IN_STOCK`を設定する。「下書き保存」を押した場合だけSupabaseの下書きとして一覧へ残す。「Squareに登録」では処理用の商品・写真を一時保存するが、Square登録が失敗した場合は完全破棄し、入力値と選択画像を保持したまま画面に留まる。成功時だけSquare IDをSupabaseへ保存し、商品一覧へ遷移する。写真なしでは画像同期を行わず、写真ありで同期に失敗した場合だけ警告する。Square作成後に応答だけ失われた場合はSKU再照会でIDを復旧し、重複登録を防ぐ。入力金額はSquareのJPY固定価格へそのまま送り、アプリでは税計算や税ID設定を行わない。
 4. **商品詳細編集**（タブ構成、いつでも中断・再開可。**2026-07-16改訂：タブ順を基本情報→写真→採寸→説明文に変更、商品一覧から開いた際のデフォルトタブも基本情報に統一**）
    - 4a. 基本情報：Square連携項目（商品番号（SKU）・商品名・カテゴリ・価格）とアプリ管理項目（対象・表記サイズ・コンディション）を画面上で分ける。他の商品と重複するSKUに変更した場合は警告を表示する。カテゴリはSquareの`ListCatalog`（`types=CATEGORY`）で取得した既存カテゴリを、新規登録と同じ「大カテゴリ→中カテゴリ」の2段階で選択する（自由入力フォールバックなし）。選択IDを下書きへ保持し、Square登録・更新時は中カテゴリを`categories`、大カテゴリを`reporting_category`へ反映する。表記サイズとコンディションはSquareの商品説明文へ反映し、対象は現時点ではSquareへ送信しない
-   - 4b. 写真管理：非公開R2へのアップロード、正面／追加写真の管理、Square CatalogImageへの添付・削除同期。正面写真はSquareのプライマリ画像とする
+   - 4b. 写真管理：非公開R2へのアップロード、正面／追加写真の管理、Square CatalogImageへの添付・段階削除同期。削除操作は保存前に取り消せ、Square更新時にだけ反映する。Square削除後もR2原本は保持する。正面写真はSquareのプライマリ画像とする
    - 4c. 採寸：写真なしでも着丈・身幅・肩幅・袖丈を手動入力できる。写真からの自動計測は試験機能として残し、候補を明示的に反映した後で手動修正する（マット・マーカーはこの画面でのみ使用）
    - 4d. 説明文プレビュー：自動生成テンプレートの確認・編集。商品名・SKUは表示のたびに現在値から組み立てるため、4aでの変更が即座に反映される
 5. **アーカイブ** — 選択商品を通常一覧から非表示にする。Square側の商品・写真とR2画像は削除せず、SKUも使用済みのまま保持する。Square商品の削除機能は初期段階では実装しない。
@@ -308,7 +312,7 @@ square_connect/
 │   │                             solveHomography・autoLandmarks/placeLandmarks/computeMeas）
 │   │                             apps/web の「採寸」タブから呼び出す（ブラウザ内で完結）
 ├── supabase/
-│   └── migrations/            # 初期スキーマ＋Square画像ID・カテゴリID追加、テスト運用向け公開RLS
+│   └── migrations/            # 初期スキーマ＋Square画像ID・カテゴリID・写真削除状態、テスト運用向け公開RLS
 ├── docs/                       # アプリの実行には不要な資料（要件・プロトタイプ）
 │   ├── mvp_prototype.html      # 動く仕様書。参照用として残す（改修しない）
 │   ├── square_connect_plan.md   # 元要件

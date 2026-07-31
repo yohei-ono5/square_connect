@@ -9,7 +9,7 @@ export function getSquareSyncStatus(item: MockItem): SquareSyncStatus {
   const updatedAt = item.updatedAt ? Date.parse(item.updatedAt) : Number.NaN;
   const syncedAt = item.squareSyncedAt ? Date.parse(item.squareSyncedAt) : Number.NaN;
   const itemPending = !Number.isFinite(syncedAt) || (Number.isFinite(updatedAt) && updatedAt > syncedAt);
-  const photoPending = item.photos.some((photo) => photo.squareImageId === null);
+  const photoPending = item.photos.some((photo) => photo.squareImageId === null || photo.pendingDelete);
   return itemPending || photoPending ? "pending" : "reflected";
 }
 

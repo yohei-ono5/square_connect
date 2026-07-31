@@ -10,6 +10,7 @@ function item(overrides: Partial<MockItem> = {}): MockItem {
     mgmtNo: "00001",
     title: "Tシャツ",
     price: 3000,
+    inventoryCount: 1,
     gender: null,
     category: null,
     categoryId: null,
@@ -44,6 +45,21 @@ describe("getSquareSyncStatus", () => {
         storagePath: "items/item-1/photo-1.jpg",
         previewUrl: "/media/items/item-1/photo-1.jpg",
         squareImageId: null,
+        pendingDelete: false,
+      }],
+    }))).toBe("pending");
+  });
+
+  it("marks a photo staged for deletion as pending", () => {
+    expect(getSquareSyncStatus(item({
+      photos: [{
+        id: "photo-1",
+        itemId: "item-1",
+        role: "main",
+        storagePath: "items/item-1/photo-1.jpg",
+        previewUrl: "/media/items/item-1/photo-1.jpg",
+        squareImageId: "square-image-1",
+        pendingDelete: true,
       }],
     }))).toBe("pending");
   });

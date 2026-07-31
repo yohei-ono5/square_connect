@@ -26,6 +26,7 @@ export const ItemSchema = z.object({
   mgmtNo: z.string(),
   title: z.string(),
   price: z.number().int().nonnegative(),
+  inventoryCount: z.number().int().min(0).max(999999),
   gender: GenderSchema,
   category: z.string().nullable(),
   categoryId: z.string().nullable(),
@@ -52,6 +53,7 @@ export const QuickRegisterInputSchema = z.object({
   mgmtNo: z.string().trim().min(1),
   title: z.string().min(1),
   price: z.number().int().nonnegative(),
+  inventoryCount: z.number().int().min(0).max(999999).default(1),
 });
 export type QuickRegisterInput = z.infer<typeof QuickRegisterInputSchema>;
 
@@ -60,6 +62,7 @@ export const RegisterToSquareInputSchema = z.object({
   mgmtNo: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(512),
   price: z.number().int().nonnegative().safe(),
+  inventoryCount: z.number().int().min(0).max(999999).default(1),
   categoryId: z.string().trim().min(1).max(255).nullable().optional(),
   reportingCategoryId: z.string().trim().min(1).max(255).nullable().optional(),
   hasPhotos: z.boolean().optional().default(false),

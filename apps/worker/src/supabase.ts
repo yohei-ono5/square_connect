@@ -12,6 +12,8 @@ export type ItemPhotoRecord = {
   width: number | null;
   height: number | null;
   sort: number;
+  pending_delete_at: string | null;
+  deleted_at: string | null;
 };
 
 export async function getItemSquareObjectId(
@@ -32,6 +34,7 @@ export type ActiveSquareItem = {
   mgmt_no: string;
   title: string;
   price: number;
+  inventory_count: number;
   description: string | null;
   square_category_id: string | null;
   square_deleted_at: string | null;
@@ -40,7 +43,7 @@ export type ActiveSquareItem = {
 export async function listActiveSquareItems(config: SupabaseConfig): Promise<ActiveSquareItem[]> {
   const response = await supabaseRequest(
     config,
-    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,description,square_category_id,square_deleted_at",
+    "items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,inventory_count,description,square_category_id,square_deleted_at",
   );
   const rows = (await response.json()) as Array<ActiveSquareItem & { square_object_id: string | null }>;
   const items = new Map<string, ActiveSquareItem>();
@@ -58,7 +61,7 @@ export async function listItemPhotos(
 ): Promise<ItemPhotoRecord[]> {
   const response = await supabaseRequest(
     config,
-    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&select=*&order=created_at.desc`,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&deleted_at=is.null&select=*&order=created_at.desc`,
   );
   return (await response.json()) as ItemPhotoRecord[];
 }
@@ -70,7 +73,7 @@ export async function getItemPhoto(
 ): Promise<ItemPhotoRecord | null> {
   const response = await supabaseRequest(
     config,
-    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&item_photo_id=eq.${encodeURIComponent(itemPhotoId)}&select=*&limit=1`,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&item_photo_id=eq.${encodeURIComponent(itemPhotoId)}&deleted_at=is.null&select=*&limit=1`,
   );
   const rows = (await response.json()) as ItemPhotoRecord[];
   return rows[0] ?? null;
@@ -160,6 +163,7 @@ export type SquareItemPatch = {
   mgmt_no?: string;
   title?: string;
   price?: number;
+  inventory_count?: number;
   description?: string | null;
   square_category_id?: string | null;
   square_variation_id?: string;
@@ -212,19 +216,21 @@ export async function deleteItemPhoto(
   return rows[0] ?? null;
 }
 
-export async function deleteItemPhotosByRole(
+export async function markItemPhotoDeleted(
   config: SupabaseConfig,
   itemId: string,
-  role: ItemPhotoRecord["role"],
-  exceptItemPhotoId: string,
-): Promise<ItemPhotoRecord[]> {
-  const response = await supabaseRequest(
+  itemPhotoId: string,
+): Promise<void> {
+  await supabaseRequest(
     config,
-    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&role=eq.${role}&item_photo_id=neq.${encodeURIComponent(exceptItemPhotoId)}`,
+    `item_photos?item_id=eq.${encodeURIComponent(itemId)}&item_photo_id=eq.${encodeURIComponent(itemPhotoId)}&deleted_at=is.null`,
     {
-      method: "DELETE",
-      headers: { Prefer: "return=representation" },
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        pending_delete_at: null,
+        deleted_at: new Date().toISOString(),
+      }),
     },
   );
-  return (await response.json()) as ItemPhotoRecord[];
 }

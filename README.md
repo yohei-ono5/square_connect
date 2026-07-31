@@ -59,8 +59,12 @@ WebPは受け付けず、ファイル形式を変換せずにR2へ保存する�
 商品をSquareへ登録すると、R2の正面写真をプライマリ画像、追加写真を通常画像として
 Square Catalogへ添付し、返された画像IDを`item_photos.square_image_id`へ保存する。
 登録済み商品の写真追加・削除もSquareへ同期する。既存DBでは
-`supabase/migrations/0002_item_photos_square_image.sql`を追加で適用する。
-写真削除はSquareのCatalogImageを先に削除し、成功後にR2とSupabaseを削除する。
+`supabase/migrations/0002_item_photos_square_image.sql`と
+`0004_item_photo_deletion_state.sql`を追加で適用する。
+商品詳細の「削除」は写真を削除予定にするだけで、保存前はSquare・R2・Supabaseを変更しない。
+「下書き保存」では削除予定をSupabaseへ保存し、「Squareを更新」で初めてSquare画像を削除する。
+Square反映後も再撮影を避けられるようR2原本と写真レコードを保持し、Supabaseでは論理削除する。
+削除予定はSquare更新前なら画面の「元に戻す」で取り消せる。
 クイック登録では複数写真をまとめて選択でき、選択後の追加・個別削除にも対応する。
 表示順の1枚目を正面写真（`main`）、2枚目以降を追加写真（`sub`）として保存する。
 複数枚のアップロード途中で失敗した場合は、作成済みの一時商品と保存済み写真を破棄する。
@@ -82,9 +86,11 @@ Square登録リクエストの冪等性キーに利用する。Square登録成�
 明示的に「下書き保存」を押した商品だけを下書きとして一覧へ残す。
 下書き保存・Square登録の成功後はいずれも商品一覧へ戻り、連続して次の商品を登録できる。
 
-クイック登録画面は、商品番号・商品名・金額を「必須項目」、大カテゴリ・中カテゴリ・写真を
+クイック登録画面は、商品番号・商品名・金額・在庫数を「必須項目」、大カテゴリ・中カテゴリ・写真を
 「任意項目」としてセクション分けする。
 Squareの商品名には商品名だけを登録し、商品番号はバリエーションのSKUへ別項目として登録する。
+在庫数は初期値1とし、Squareの商品バリエーションで在庫追跡を有効にして、対象店舗の
+`IN_STOCK`物理在庫数へ反映する。0以上999,999以下の整数を入力できる。
 写真は任意で、添付されていない場合はSquare画像同期を実行せず、画像に関する警告も表示しない。
 写真を添付した場合だけSquareへ画像を同期し、画像同期に失敗したときは、商品登録自体が
 成功したことと画像だけが未反映であることを商品一覧に警告表示する。
@@ -127,12 +133,12 @@ Cloudflareの本番ビルドには`VITE_SUPABASE_URL`と`VITE_SUPABASE_ANON_KEY`
 
 - 「下書き保存」：Supabaseだけを更新し、Squareには反映しない
 - 「Squareに登録」：未登録商品をSquareへ新規登録する
-- 「Squareを更新」：登録済み商品の商品名・SKU・価格・説明文と未同期写真をSquareへ反映する
-- 「Squareの最新情報を取得」：保存済みの`square_object_id`を直接指定し、Squareの商品名・SKU・価格・説明文をSupabaseと表示中の画面へ反映する
+- 「Squareを更新」：登録済み商品の商品名・SKU・価格・在庫数・説明文と未同期写真をSquareへ反映する
+- 「Squareの最新情報を取得」：保存済みの`square_object_id`を直接指定し、Squareの商品名・SKU・価格・在庫数・説明文をSupabaseと表示中の画面へ反映する
 
 商品詳細の基本情報は、連携範囲が分かるよう画面上で次の2区分に分ける。
 
-- 「Square連携項目（Squareに直接反映されます）」：商品番号（SKU）、商品名、カテゴリ、価格
+- 「Square連携項目（Squareに直接反映されます）」：商品番号（SKU）、商品名、カテゴリ、価格、在庫数
 - 「アプリ管理項目（Squareには反映されません）」：対象、表記サイズ、コンディション
 
 アプリ管理項目はSupabaseへ保存する。表記サイズとコンディションはSquare Catalogの
@@ -166,6 +172,12 @@ Tシャツ・ショートパンツなどを上位、ダウン・コート・ニ�
 金額は入力した円の整数をSquareの固定価格へそのまま送信し、アプリ内では消費税の加算・
 逆算や税IDの設定を行わない。税込・税別の扱いはSquare側の税設定に従う。
 
+在庫数はSquare Inventory APIの`PHYSICAL_COUNT`として店舗別に反映する。
+`SQUARE_LOCATION_ID`が設定されていればその店舗を使い、未設定ならSquareの有効なメイン店舗を
+自動選択する。有効店舗が1件だけの場合はその店舗を使用する。複数店舗で自動判定できない場合は、
+Cloudflare Workerの変数`SQUARE_LOCATION_ID`へ対象店舗IDを設定する。OAuth連携へ移行する場合は
+`INVENTORY_READ`、`INVENTORY_WRITE`、`MERCHANT_PROFILE_READ`権限が必要になる。
+
 最新情報取得はSKU検索ではなく、対象商品のSquare IDを直接使うため、別商品を誤って取り込まない。
 
 Square側の変更は`catalog.version.updated` Webhookを
@@ -173,7 +185,8 @@ Square側の変更は`catalog.version.updated` Webhookを
 利用前に以下を行う。
 
 1. `supabase/migrations/0001_init.sql`、`0002_item_photos_square_image.sql`、
-   `0003_item_square_category.sql`を順番に適用する
+   `0003_item_square_category.sql`、`0004_item_photo_deletion_state.sql`、
+   `0005_item_inventory_count.sql`を順番に適用する
 2. Workerへ`SUPABASE_URL`、`SUPABASE_SECRET_KEY`（SupabaseのSecret key）、
    `SQUARE_WEBHOOK_SIGNATURE_KEY`、`SQUARE_WEBHOOK_NOTIFICATION_URL`を設定する
 3. Square Developer Consoleで、上記通知URLを`catalog.version.updated`へ登録する
@@ -196,6 +209,8 @@ Squareへ未反映の写真がある場合は`Square未反映`になる。Square
 商品詳細を開いた時点から入力内容が変わっていない場合は、不要な保存日時更新を防ぐため
 「下書き保存」と登録済み商品の「Squareを更新」を無効にする。下書き保存後は、
 Squareへ未反映の変更が残るため「Squareを更新」だけを有効にする。
+写真の追加や削除予定も未反映変更として扱い、削除予定がある場合は写真を薄く表示して
+「元に戻す」を提供する。保存せずに画面を離れた場合、削除予定は破棄される。
 
 Square側の編集はWebhookでSupabaseへ反映する。ブラウザへ戻った際はSupabaseを自動再読込し、
 登録済みの商品詳細を開いた際と、別画面から商品詳細へ戻った際は、保存済みSquare商品IDから
@@ -225,6 +240,13 @@ Square全カタログやアーカイブ済み商品、Square未登録商品は�
 写真を添付した時点ではR2とSupabaseへの保存だけを行い、Squareへは送信しない。Square登録済み
 商品の写真は`Square未反映`として扱い、商品詳細の「Squareを更新」を押したときに商品情報と
 まとめてSquareへ反映する。Squareへの反映に失敗した場合も、この更新操作の結果として表示する。
+写真削除も同じ更新操作へ揃え、削除ボタンだけでSquare画像を即時削除しない。
+
+### スマートフォン表示
+
+商品詳細は最大幅480pxのまま画面幅100%で表示する。360px以下では商品名とSquare操作を
+縦方向へ組み替え、340px以下では下部の「下書き保存」「Squareを更新」を縦並びにする。
+長い商品名やボタン文言は折り返し、横スクロールを発生させない。
 
 ### 商品のアーカイブ
 

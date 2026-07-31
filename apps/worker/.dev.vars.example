@@ -1,4 +1,6 @@
 SQUARE_ACCESS_TOKEN=your-sandbox-token-here
+# 複数の有効店舗がありメイン店舗を自動判定できない場合だけ設定する
+SQUARE_LOCATION_ID=your-square-location-id
 SQUARE_WEBHOOK_SIGNATURE_KEY=your-webhook-signature-key
 SQUARE_WEBHOOK_NOTIFICATION_URL=https://your-worker.example.com/api/webhooks/square
 SUPABASE_URL=https://your-project.supabase.co

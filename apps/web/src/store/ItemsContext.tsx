@@ -15,9 +15,11 @@ import {
   refreshActiveItemsFromSquare as refreshStoredActiveItemsFromSquare,
   refreshItemFromSquare as refreshStoredItemFromSquare,
   saveItem as persistItem,
+  saveItemPhotoDeletionDraft,
   saveSquareRegistration as persistSquareRegistration,
   syncItemPhotosToSquare as syncStoredPhotosToSquare,
   type StoredPhoto,
+  type PhotoSquareSyncResult,
   type SquareListRefreshResult,
   uploadItemPhoto,
 } from "../lib/itemRepository";
@@ -37,6 +39,7 @@ export type QuickRegisterInput = {
   mgmtNo: string;
   title: string;
   price: number;
+  inventoryCount: number;
   category?: string | null;
   categoryId?: string | null;
   photoFiles?: File[];
@@ -61,11 +64,10 @@ type ItemsContextValue = {
   archiveItem: (id: string) => Promise<void>;
   discardItem: (id: string) => Promise<void>;
   updateItem: (id: string, patch: Partial<MockItem>) => void;
-  saveItem: (id: string) => Promise<void>;
+  saveItem: (id: string, pendingPhotoDeletionIds?: string[]) => Promise<void>;
   saveSquareRegistration: (id: string, squareObjectId: string, squareVariationId: string) => Promise<void>;
-  syncPhotosToSquare: (id: string) => Promise<number>;
+  syncPhotosToSquare: (id: string) => Promise<PhotoSquareSyncResult>;
   addPhoto: (id: string, role: PhotoRole, file: File) => Promise<void>;
-  removePhoto: (id: string, photoId: string) => Promise<void>;
   refreshActiveItemsFromSquare: () => Promise<SquareListRefreshResult>;
   refreshItemFromSquare: (id: string) => Promise<void>;
   markSquareSynced: (id: string) => Promise<void>;
@@ -167,6 +169,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           mgmtNo: input.mgmtNo.trim(),
           title: input.title.trim(),
           price: input.price,
+          inventoryCount: input.inventoryCount,
           category: input.category ?? null,
           categoryId: input.categoryId ?? null,
         });
@@ -227,16 +230,27 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
       updateItem: (id, patch) => {
         setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
       },
-      saveItem: async (id) => {
+      saveItem: async (id, pendingPhotoDeletionIds) => {
         const item = items.find((candidate) => candidate.id === id);
         if (!item) throw new AppError("ITEM_NOT_FOUND");
+        const nextPendingIds = pendingPhotoDeletionIds
+          ?? item.photos.filter((photo) => photo.pendingDelete).map((photo) => photo.id);
+        await saveItemPhotoDeletionDraft(id, nextPendingIds);
         const updatedAt = await persistItem(item);
         setItems((prev) => prev.map((candidate) => candidate.id === id
-          ? { ...candidate, updatedAt }
+          ? {
+              ...candidate,
+              updatedAt,
+              photos: candidate.photos.map((photo) => ({
+                ...photo,
+                pendingDelete: nextPendingIds.includes(photo.id),
+              })),
+            }
           : candidate));
       },
       saveSquareRegistration: async (id, squareObjectId, squareVariationId) => {
         const syncedAt = await persistSquareRegistration(id, squareObjectId, squareVariationId);
+        const storedPhotos = await listItemPhotos();
         setItems((prev) =>
           prev.map((item) =>
             item.id === id
@@ -247,6 +261,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
                   updatedAt: syncedAt,
                   squareSyncedAt: syncedAt,
                   squareDeletedAt: null,
+                  photos: storedPhotos.filter((photo) => photo.itemId === id),
                 }
               : item,
           ),
@@ -271,12 +286,6 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
           }),
         );
       },
-      removePhoto: async (id, photoId) => {
-        await deleteStoredPhoto(id, photoId);
-        setItems((prev) =>
-          prev.map((it) => (it.id === id ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)),
-        );
-      },
       refreshActiveItemsFromSquare: async () => {
         const result = await refreshStoredActiveItemsFromSquare();
         await reloadItems();
@@ -294,6 +303,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
             ...(latest.mgmtNo !== undefined ? { mgmtNo: latest.mgmtNo } : {}),
             ...(latest.title !== undefined ? { title: latest.title } : {}),
             ...(latest.price !== undefined ? { price: latest.price } : {}),
+            ...(latest.inventoryCount !== undefined ? { inventoryCount: latest.inventoryCount } : {}),
             description: latest.description,
             categoryId: latest.categoryId,
             updatedAt: latest.syncedAt,

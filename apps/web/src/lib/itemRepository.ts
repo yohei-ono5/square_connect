@@ -10,6 +10,7 @@ export type StoredPhoto = {
   storagePath: string;
   previewUrl: string;
   squareImageId: string | null;
+  pendingDelete: boolean;
 };
 
 type PhotoRow = {
@@ -18,6 +19,7 @@ type PhotoRow = {
   role: "main" | "sub";
   storage_path: string;
   square_image_id: string | null;
+  pending_delete_at: string | null;
 };
 
 export const MAX_SQUARE_IMAGE_BYTES = 15_000_000;
@@ -31,6 +33,7 @@ type ItemRow = {
   mgmt_no: string;
   title: string;
   price: number;
+  inventory_count: number;
   gender: Gender;
   category: string | null;
   square_category_id: string | null;
@@ -54,6 +57,7 @@ const ITEM_COLUMNS = [
   "mgmt_no",
   "title",
   "price",
+  "inventory_count",
   "gender",
   "category",
   "square_category_id",
@@ -87,6 +91,7 @@ function rowToItem(row: ItemRow): Item {
     mgmtNo: row.mgmt_no,
     title: row.title,
     price: row.price,
+    inventoryCount: row.inventory_count,
     gender: row.gender,
     category: row.category,
     categoryId: row.square_category_id,
@@ -137,6 +142,7 @@ function photoRowToStoredPhoto(row: PhotoRow): StoredPhoto {
     storagePath: row.storage_path,
     previewUrl: `${WORKER_BASE_URL}/media/${row.storage_path}`,
     squareImageId: row.square_image_id,
+    pendingDelete: row.pending_delete_at !== null,
   };
 }
 
@@ -214,7 +220,8 @@ export async function listItems(): Promise<Item[]> {
 export async function listItemPhotos(): Promise<StoredPhoto[]> {
   const result = await getSupabase()
     .from("item_photos")
-    .select("item_photo_id,item_id,role,storage_path,square_image_id")
+    .select("item_photo_id,item_id,role,storage_path,square_image_id,pending_delete_at")
+    .is("deleted_at", null)
     .order("sort", { ascending: true })
     .order("created_at", { ascending: false });
   if (result.error) throw repositoryError("PHOTO_LOAD", result.error);
@@ -244,14 +251,26 @@ export async function uploadItemPhoto(
   return { photo: result.photo };
 }
 
-export async function syncItemPhotosToSquare(itemId: string): Promise<number> {
+export type PhotoSquareSyncResult = {
+  synced: number;
+  deleted: number;
+};
+
+export async function syncItemPhotosToSquare(itemId: string): Promise<PhotoSquareSyncResult> {
   const response = await fetch(
     `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos/sync-to-square`,
     { method: "POST" },
   );
-  const result = (await response.json().catch(() => null)) as { synced?: number; message?: string } | null;
+  const result = (await response.json().catch(() => null)) as {
+    synced?: number;
+    deleted?: number;
+    message?: string;
+  } | null;
   if (!response.ok) throw new AppError("PHOTO_SYNC", result, result?.message);
-  return result?.synced ?? 0;
+  return {
+    synced: result?.synced ?? 0,
+    deleted: result?.deleted ?? 0,
+  };
 }
 
 export type SquareItemRefresh = {
@@ -260,6 +279,7 @@ export type SquareItemRefresh = {
   mgmtNo?: string;
   title?: string;
   price?: number;
+  inventoryCount?: number;
   description: string | null;
   categoryId: string | null;
   syncedAt: string;
@@ -310,10 +330,33 @@ export async function deleteItemPhoto(itemId: string, itemPhotoId: string): Prom
   if (!response.ok) throw new AppError("PHOTO_DELETE", result, result?.message);
 }
 
+export async function saveItemPhotoDeletionDraft(
+  itemId: string,
+  pendingPhotoIds: string[],
+): Promise<void> {
+  const supabase = getSupabase();
+  const reset = await supabase
+    .from("item_photos")
+    .update({ pending_delete_at: null })
+    .eq("item_id", itemId)
+    .is("deleted_at", null);
+  if (reset.error) throw repositoryError("PHOTO_DELETE", reset.error);
+  if (pendingPhotoIds.length === 0) return;
+
+  const staged = await supabase
+    .from("item_photos")
+    .update({ pending_delete_at: new Date().toISOString() })
+    .eq("item_id", itemId)
+    .is("deleted_at", null)
+    .in("item_photo_id", pendingPhotoIds);
+  if (staged.error) throw repositoryError("PHOTO_DELETE", staged.error);
+}
+
 export async function createItem(input: {
   mgmtNo: string;
   title: string;
   price: number;
+  inventoryCount: number;
   category?: string | null;
   categoryId?: string | null;
 }): Promise<Item> {
@@ -326,6 +369,7 @@ export async function createItem(input: {
       mgmt_no: input.mgmtNo,
       title: input.title,
       price: input.price,
+      inventory_count: input.inventoryCount,
       category: input.category ?? null,
       square_category_id: input.categoryId ?? null,
     })
@@ -344,6 +388,7 @@ export async function saveItem(item: Item): Promise<string> {
       mgmt_no: item.mgmtNo.trim(),
       title: item.title.trim(),
       price: item.price,
+      inventory_count: item.inventoryCount,
       gender: item.gender,
       category: item.category,
       square_category_id: item.categoryId,

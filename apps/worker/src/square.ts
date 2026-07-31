@@ -80,6 +80,29 @@ type BatchRetrieveCatalogResponse = {
   errors?: SquareError[];
 };
 
+type ListLocationsResponse = {
+  locations?: Array<{
+    id?: string;
+    name?: string;
+    status?: string;
+    is_main_location?: boolean;
+  }>;
+  errors?: SquareError[];
+};
+
+type InventoryCount = {
+  catalog_object_id?: string;
+  location_id?: string;
+  state?: string;
+  quantity?: string;
+};
+
+type InventoryCountsResponse = {
+  counts?: InventoryCount[];
+  cursor?: string;
+  errors?: SquareError[];
+};
+
 export class SquareApiError extends Error {
   constructor(
     public readonly status: number,
@@ -205,13 +228,25 @@ export async function deleteCatalogImage(
   squareImageId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
-  await squareRequest<{ deleted_object_ids?: string[] }>(
-    config,
-    `/v2/catalog/object/${encodeURIComponent(squareImageId)}`,
-    undefined,
-    fetcher,
-    "DELETE",
-  );
+  try {
+    await squareRequest<{ deleted_object_ids?: string[] }>(
+      config,
+      `/v2/catalog/object/${encodeURIComponent(squareImageId)}`,
+      undefined,
+      fetcher,
+      "DELETE",
+    );
+  } catch (error) {
+    // Square削除成功後にDB更新だけ失敗した場合も安全に再試行できるよう、
+    // 既に存在しない画像は削除済みとして扱う。
+    if (
+      error instanceof SquareApiError
+      && (error.status === 404 || error.errors.some((detail) => detail.code === "NOT_FOUND"))
+    ) {
+      return;
+    }
+    throw error;
+  }
 }
 
 function mappedId(response: UpsertCatalogResponse, clientId: string): string | undefined {
@@ -285,6 +320,7 @@ export async function registerItemInSquare(
                   item_id: "#item",
                   name: "通常",
                   sku: input.mgmtNo,
+                  track_inventory: true,
                   pricing_type: "FIXED_PRICING",
                   price_money: {
                     amount: input.price,
@@ -355,6 +391,7 @@ export async function updateItemInSquare(
       ...variation.item_variation_data,
       item_id: item.id,
       sku: input.mgmtNo,
+      track_inventory: true,
       pricing_type: "FIXED_PRICING",
       price_money: { amount: input.price, currency: "JPY" },
     },
@@ -412,7 +449,119 @@ export type SquareItemSnapshot = {
   price?: number;
   description?: string;
   categoryId?: string;
+  inventoryCount?: number;
 };
+
+export async function resolveInventoryLocationId(
+  config: SquareConfig,
+  configuredLocationId?: string,
+  fetcher: typeof fetch = fetch,
+): Promise<string> {
+  if (configuredLocationId?.trim()) return configuredLocationId.trim();
+  const response = await squareRequest<ListLocationsResponse>(
+    config,
+    "/v2/locations",
+    undefined,
+    fetcher,
+    "GET",
+  );
+  const activeLocations = (response.locations ?? []).filter(
+    (location) => location.id && location.status === "ACTIVE",
+  );
+  const mainLocation = activeLocations.find((location) => location.is_main_location);
+  const selected = mainLocation ?? (activeLocations.length === 1 ? activeLocations[0] : undefined);
+  if (!selected?.id) {
+    throw new SquareApiError(422, [{
+      detail: "Inventory location could not be determined. Configure SQUARE_LOCATION_ID.",
+    }]);
+  }
+  return selected.id;
+}
+
+export async function setInventoryPhysicalCount(
+  config: SquareConfig,
+  input: {
+    squareVariationId: string;
+    locationId: string;
+    quantity: number;
+  },
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  await squareRequest<InventoryCountsResponse>(
+    config,
+    "/v2/inventory/changes/batch-create",
+    {
+      idempotency_key: crypto.randomUUID(),
+      changes: [{
+        type: "PHYSICAL_COUNT",
+        physical_count: {
+          reference_id: crypto.randomUUID(),
+          catalog_object_id: input.squareVariationId,
+          state: "IN_STOCK",
+          location_id: input.locationId,
+          quantity: String(input.quantity),
+          occurred_at: new Date().toISOString(),
+        },
+      }],
+      ignore_unchanged_counts: false,
+    },
+    fetcher,
+  );
+}
+
+function parseInventoryQuantity(counts: InventoryCount[], variationId: string, locationId: string): number {
+  const count = counts.find(
+    (candidate) =>
+      candidate.catalog_object_id === variationId
+      && candidate.location_id === locationId
+      && candidate.state === "IN_STOCK",
+  );
+  const quantity = Number(count?.quantity ?? 0);
+  return Number.isFinite(quantity) && quantity >= 0 ? Math.trunc(quantity) : 0;
+}
+
+export async function retrieveInventoryCount(
+  config: SquareConfig,
+  squareVariationId: string,
+  locationId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<number> {
+  const response = await squareRequest<InventoryCountsResponse>(
+    config,
+    `/v2/inventory/${encodeURIComponent(squareVariationId)}?location_ids=${encodeURIComponent(locationId)}`,
+    undefined,
+    fetcher,
+    "GET",
+  );
+  return parseInventoryQuantity(response.counts ?? [], squareVariationId, locationId);
+}
+
+export async function batchRetrieveInventoryCounts(
+  config: SquareConfig,
+  squareVariationIds: string[],
+  locationId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<Map<string, number>> {
+  const uniqueIds = [...new Set(squareVariationIds)];
+  const result = new Map<string, number>();
+  for (let offset = 0; offset < uniqueIds.length; offset += 1000) {
+    const ids = uniqueIds.slice(offset, offset + 1000);
+    const response = await squareRequest<InventoryCountsResponse>(
+      config,
+      "/v2/inventory/counts/batch-retrieve",
+      {
+        catalog_object_ids: ids,
+        location_ids: [locationId],
+        states: ["IN_STOCK"],
+      },
+      fetcher,
+    );
+    for (const variationId of ids) {
+      result.set(variationId, parseInventoryQuantity(response.counts ?? [], variationId, locationId));
+    }
+  }
+  return result;
+}
 
 function catalogItemToSnapshot(item: CatalogItemObject): SquareItemSnapshot | null {
   if (!item.id || item.type !== "ITEM") return null;

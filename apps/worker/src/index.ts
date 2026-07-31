@@ -2,14 +2,18 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { RegisterToSquareInputSchema, UpdateSquareItemInputSchema } from "@square-connect/shared";
 import {
+  batchRetrieveInventoryCounts,
   batchRetrieveSquareItems,
   deleteCatalogImage,
   DuplicateSkuError,
   listSquareCategories,
   registerItemInSquare,
+  resolveInventoryLocationId,
+  retrieveInventoryCount,
   retrieveSquareItem,
   SquareApiError,
   searchChangedSquareItems,
+  setInventoryPhysicalCount,
   updateItemInSquare,
   uploadCatalogImage,
   type SquareItemSnapshot,
@@ -22,6 +26,7 @@ import {
   getLastCatalogUpdatedAt,
   listActiveSquareItems,
   listItemPhotos,
+  markItemPhotoDeleted,
   recordWebhookEvent,
   saveCatalogUpdatedAt,
   saveItemPhotoSquareImageId,
@@ -35,6 +40,7 @@ type Bindings = {
   ITEM_IMAGES: R2Bucket;
   SQUARE_ACCESS_TOKEN: string;
   SQUARE_ENV: string;
+  SQUARE_LOCATION_ID?: string;
   SQUARE_WEBHOOK_SIGNATURE_KEY: string;
   SQUARE_WEBHOOK_NOTIFICATION_URL: string;
   SUPABASE_URL: string;
@@ -92,6 +98,10 @@ function squareConfig(env: Bindings) {
   return { accessToken: env.SQUARE_ACCESS_TOKEN, environment: env.SQUARE_ENV };
 }
 
+function resolveSquareInventoryLocation(env: Bindings) {
+  return resolveInventoryLocationId(squareConfig(env), env.SQUARE_LOCATION_ID);
+}
+
 function supabaseConfig(env: Bindings) {
   return { url: env.SUPABASE_URL, secretKey: env.SUPABASE_SECRET_KEY };
 }
@@ -109,6 +119,7 @@ function squareSnapshotPatch(snapshot: SquareItemSnapshot, syncedAt: string): Sq
     ...(snapshot.mgmtNo ? { mgmt_no: snapshot.mgmtNo } : {}),
     ...(snapshot.title ? { title: snapshot.title } : {}),
     ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
+    ...(snapshot.inventoryCount !== undefined ? { inventory_count: snapshot.inventoryCount } : {}),
     description: snapshot.description ?? null,
     square_category_id: snapshot.categoryId ?? null,
     ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
@@ -145,6 +156,7 @@ function hasSquareSnapshotChanged(item: ActiveSquareItem, snapshot: SquareItemSn
     || (snapshot.mgmtNo !== undefined && snapshot.mgmtNo !== item.mgmt_no)
     || (snapshot.title !== undefined && snapshot.title !== item.title)
     || (snapshot.price !== undefined && snapshot.price !== item.price)
+    || (snapshot.inventoryCount !== undefined && snapshot.inventoryCount !== item.inventory_count)
     || (snapshot.description ?? null) !== item.description
     || (snapshot.categoryId ?? null) !== (item.square_category_id ?? null)
     || (snapshot.squareVariationId !== undefined
@@ -180,12 +192,33 @@ async function syncPhotoToSquare(
 
 async function syncItemPhotosToSquare(env: Bindings, itemId: string, squareObjectId: string) {
   const photos = await listItemPhotos(supabaseConfig(env), itemId);
-  const currentMain = photos.find((photo) => photo.role === "main");
-  const staleMainPhotos = currentMain
-    ? photos.filter((photo) => photo.role === "main" && photo.item_photo_id !== currentMain.item_photo_id)
-    : [];
-  const currentPhotos = photos.filter((photo) => photo.role === "sub" || photo.item_photo_id === currentMain?.item_photo_id);
+  const pendingDeletionPhotos = photos.filter((photo) => photo.pending_delete_at);
+  const activePhotos = photos.filter((photo) => !photo.pending_delete_at);
   const failures: string[] = [];
+  let deleted = 0;
+
+  // 削除予定は「Squareを更新」が押された時だけSquareへ反映する。
+  // Square削除後もR2原本とDB行は保持し、DB側だけ論理削除する。
+  for (const photo of pendingDeletionPhotos) {
+    try {
+      if (photo.square_image_id) {
+        await deleteCatalogImage(squareConfig(env), photo.square_image_id);
+      }
+      await markItemPhotoDeleted(supabaseConfig(env), itemId, photo.item_photo_id);
+      deleted += 1;
+    } catch (error) {
+      console.error("Pending Square image deletion failed", photo.item_photo_id, error);
+      failures.push(photo.item_photo_id);
+    }
+  }
+
+  const currentMain = activePhotos.find((photo) => photo.role === "main");
+  const staleMainPhotos = currentMain
+    ? activePhotos.filter((photo) => photo.role === "main" && photo.item_photo_id !== currentMain.item_photo_id)
+    : [];
+  const currentPhotos = activePhotos.filter(
+    (photo) => photo.role === "sub" || photo.item_photo_id === currentMain?.item_photo_id,
+  );
   let synced = 0;
   let currentMainSynced = Boolean(currentMain?.square_image_id);
   for (const photo of currentPhotos) {
@@ -204,15 +237,15 @@ async function syncItemPhotosToSquare(env: Bindings, itemId: string, squareObjec
     for (const stalePhoto of staleMainPhotos) {
       try {
         if (stalePhoto.square_image_id) await deleteCatalogImage(squareConfig(env), stalePhoto.square_image_id);
-        await env.ITEM_IMAGES.delete(stalePhoto.storage_path);
-        await deleteItemPhoto(supabaseConfig(env), itemId, stalePhoto.item_photo_id);
+        await markItemPhotoDeleted(supabaseConfig(env), itemId, stalePhoto.item_photo_id);
+        deleted += 1;
       } catch (error) {
         console.error("Stale Square main image cleanup failed", stalePhoto.item_photo_id, error);
         failures.push(stalePhoto.item_photo_id);
       }
     }
   }
-  return { synced, failures };
+  return { synced, deleted, failures };
 }
 
 app.post("/api/items/:id/photos", async (c) => {
@@ -270,6 +303,8 @@ app.post("/api/items/:id/photos", async (c) => {
         width: null,
         height: null,
         sort: 0,
+        pending_delete_at: null,
+        deleted_at: null,
       });
     } catch (error) {
       await c.env.ITEM_IMAGES.delete(storagePath);
@@ -285,6 +320,7 @@ app.post("/api/items/:id/photos", async (c) => {
           storagePath: photo.storage_path,
           previewUrl: photoUrl(c.req.url, photo.storage_path),
           squareImageId: photo.square_image_id,
+          pendingDelete: false,
         },
       },
       201,
@@ -304,13 +340,25 @@ app.delete("/api/items/:id/photos/:photoId", async (c) => {
 
   try {
     const database = supabaseConfig(c.env);
+    const squareObjectId = await getItemSquareObjectId(database, itemId);
+    if (squareObjectId) {
+      return c.json({
+        error: "registered_photo_requires_square_update",
+        message: "登録済み商品の写真は、削除予定にしてからSquareを更新してください",
+      }, 409);
+    }
     const photo = await getItemPhoto(
       database,
       itemId,
       itemPhotoId,
     );
     if (!photo) return c.json({ error: "photo_not_found", message: "写真が見つかりません" }, 404);
-    if (photo.square_image_id) await deleteCatalogImage(squareConfig(c.env), photo.square_image_id);
+    if (photo.square_image_id) {
+      return c.json({
+        error: "registered_photo_requires_square_update",
+        message: "Squareへ反映済みの写真は、削除予定にしてからSquareを更新してください",
+      }, 409);
+    }
     await c.env.ITEM_IMAGES.delete(photo.storage_path);
     await deleteItemPhoto(database, itemId, itemPhotoId);
     return c.json({ ok: true });
@@ -336,7 +384,7 @@ app.post("/api/items/:id/photos/sync-to-square", async (c) => {
         synced: result.synced,
       }, 502);
     }
-    return c.json({ ok: true, synced: result.synced });
+    return c.json({ ok: true, synced: result.synced, deleted: result.deleted });
   } catch (error) {
     console.error("Square image sync failed", error);
     return c.json({ error: "square_image_sync_failed", message: "写真をSquareへ反映できませんでした" }, 502);
@@ -468,6 +516,18 @@ app.post("/api/items/:id/register-to-square", async (c) => {
       parsed.data,
       `square-connect-item-${itemId}`,
     );
+    let inventorySyncWarning: string | undefined;
+    try {
+      const locationId = await resolveSquareInventoryLocation(c.env);
+      await setInventoryPhysicalCount(squareConfig(c.env), {
+        squareVariationId: result.squareVariationId,
+        locationId,
+        quantity: parsed.data.inventoryCount,
+      });
+    } catch (error) {
+      console.error("Square item created but inventory sync failed", error);
+      inventorySyncWarning = "商品は登録しましたが、在庫数をSquareへ反映できませんでした";
+    }
     let imageSyncWarning: string | undefined;
     if (parsed.data.hasPhotos) {
       try {
@@ -482,6 +542,7 @@ app.post("/api/items/:id/register-to-square", async (c) => {
     }
     return c.json({
       ...result,
+      ...(inventorySyncWarning ? { inventorySyncWarning } : {}),
       ...(imageSyncWarning ? { imageSyncWarning } : {}),
     }, 201);
   } catch (error) {
@@ -532,6 +593,12 @@ app.patch("/api/items/:id/square", async (c) => {
       { accessToken: c.env.SQUARE_ACCESS_TOKEN, environment: c.env.SQUARE_ENV },
       parsed.data,
     );
+    const locationId = await resolveSquareInventoryLocation(c.env);
+    await setInventoryPhysicalCount(squareConfig(c.env), {
+      squareVariationId: result.squareVariationId,
+      locationId,
+      quantity: parsed.data.inventoryCount,
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof SquareApiError) {
@@ -553,7 +620,22 @@ app.post("/api/items/sync-active-from-square", async (c) => {
       return c.json({ targeted: 0, changed: 0, unchanged: 0, deleted: 0, missing: 0 });
     }
 
-    const snapshots = await batchRetrieveSquareItems(squareConfig(c.env), squareObjectIds);
+    const catalogSnapshots = await batchRetrieveSquareItems(squareConfig(c.env), squareObjectIds);
+    const variationIds = catalogSnapshots.flatMap((snapshot) =>
+      snapshot.squareVariationId ? [snapshot.squareVariationId] : [],
+    );
+    const locationId = await resolveSquareInventoryLocation(c.env);
+    const inventoryCounts = await batchRetrieveInventoryCounts(
+      squareConfig(c.env),
+      variationIds,
+      locationId,
+    );
+    const snapshots = catalogSnapshots.map((snapshot) => ({
+      ...snapshot,
+      ...(snapshot.squareVariationId
+        ? { inventoryCount: inventoryCounts.get(snapshot.squareVariationId) ?? 0 }
+        : {}),
+    }));
     const syncedAt = new Date().toISOString();
     const currentItems = new Map(activeItems.map((item) => [item.square_object_id, item]));
     const changedSnapshots = snapshots.filter((snapshot) => {
@@ -596,7 +678,15 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
 
     // Supabaseに保存済みのSquare商品IDだけを取得対象にし、SKU検索による別商品の
     // 誤更新を避ける。
-    const snapshot = await retrieveSquareItem(squareConfig(c.env), squareObjectId);
+    const catalogSnapshot = await retrieveSquareItem(squareConfig(c.env), squareObjectId);
+    const inventoryCount = !catalogSnapshot.isDeleted && catalogSnapshot.squareVariationId
+      ? await retrieveInventoryCount(
+          squareConfig(c.env),
+          catalogSnapshot.squareVariationId,
+          await resolveSquareInventoryLocation(c.env),
+        )
+      : undefined;
+    const snapshot = { ...catalogSnapshot, ...(inventoryCount !== undefined ? { inventoryCount } : {}) };
     const syncedAt = new Date().toISOString();
     await updateItemBySquareId(database, squareObjectId, snapshot.isDeleted
       ? {
@@ -609,6 +699,7 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
           ...(snapshot.mgmtNo ? { mgmt_no: snapshot.mgmtNo } : {}),
           ...(snapshot.title ? { title: snapshot.title } : {}),
           ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
+          ...(snapshot.inventoryCount !== undefined ? { inventory_count: snapshot.inventoryCount } : {}),
           description: snapshot.description ?? null,
           square_category_id: snapshot.categoryId ?? null,
           ...(snapshot.squareVariationId ? { square_variation_id: snapshot.squareVariationId } : {}),
@@ -625,6 +716,7 @@ app.post("/api/items/:id/sync-from-square", async (c) => {
         ...(snapshot.mgmtNo ? { mgmtNo: snapshot.mgmtNo } : {}),
         ...(snapshot.title ? { title: snapshot.title } : {}),
         ...(snapshot.price !== undefined ? { price: snapshot.price } : {}),
+        ...(snapshot.inventoryCount !== undefined ? { inventoryCount: snapshot.inventoryCount } : {}),
         description: snapshot.description ?? null,
         categoryId: snapshot.categoryId ?? null,
       },
