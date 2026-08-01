@@ -81,6 +81,43 @@ function editableItemSignature(item: MockItem): string {
   });
 }
 
+type EditableItemPatch = Pick<
+  MockItem,
+  | "mgmtNo"
+  | "title"
+  | "price"
+  | "inventoryCount"
+  | "gender"
+  | "category"
+  | "categoryId"
+  | "size"
+  | "condition"
+  | "measurements"
+  | "description"
+  | "measurePoints"
+>;
+
+function editableItemPatch(item: MockItem): EditableItemPatch {
+  return {
+    mgmtNo: item.mgmtNo,
+    title: item.title,
+    price: item.price,
+    inventoryCount: item.inventoryCount,
+    gender: item.gender,
+    category: item.category,
+    categoryId: item.categoryId,
+    size: item.size,
+    condition: item.condition,
+    measurements: item.measurements ? { ...item.measurements } : null,
+    description: item.description,
+    measurePoints: item.measurePoints
+      ? Object.fromEntries(
+          Object.entries(item.measurePoints).map(([key, point]) => [key, { ...point }]),
+        ) as MeasurePoints
+      : undefined,
+  };
+}
+
 function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
@@ -132,6 +169,8 @@ export function ItemDetailPage() {
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const automaticSquareRefreshRef = useRef<{ squareObjectId: string; requestedAt: number } | null>(null);
+  const updateItemRef = useRef(updateItem);
+  const persistedEditableItemRef = useRef<{ itemId: string; patch: EditableItemPatch } | null>(null);
   const saving = savingAction !== null;
   const persistedPhotoDeletionSignature = item
     ? item.photos.filter((photo) => photo.pendingDelete).map((photo) => photo.id).sort().join(",")
@@ -171,6 +210,10 @@ export function ItemDetailPage() {
     loadSquareCategories();
   }, [loadSquareCategories]);
 
+  useEffect(() => {
+    updateItemRef.current = updateItem;
+  }, [updateItem]);
+
   // 旧データはカテゴリ名だけを保持している。名前が一意にSquareカテゴリへ
   // 対応するときだけIDを補完し、「その他」のような同名カテゴリは自動推測しない。
   useEffect(() => {
@@ -183,6 +226,10 @@ export function ItemDetailPage() {
       setSavedBaseline(null);
       return;
     }
+    persistedEditableItemRef.current = {
+      itemId: item.id,
+      patch: editableItemPatch(item),
+    };
     setSavedBaseline({
       itemId: item.id,
       signature: editableItemSignature(item),
@@ -194,6 +241,14 @@ export function ItemDetailPage() {
     });
     // 入力中はupdatedAtが変わらず、保存またはSquareから再取得した時だけ基準を更新する。
   }, [item?.id, item?.updatedAt]);
+
+  // 入力中の値は共有の商品一覧stateにも反映されるため、保存せずに詳細画面を
+  // 離れた場合は、最後に保存または取得できた値へ戻す。
+  useEffect(() => () => {
+    const persistedItem = persistedEditableItemRef.current;
+    if (!id || persistedItem?.itemId !== id) return;
+    updateItemRef.current(id, persistedItem.patch);
+  }, [id]);
 
   useEffect(() => {
     setCustomSizeSelected(false);
@@ -222,10 +277,11 @@ export function ItemDetailPage() {
 
       automaticSquareRefreshRef.current = { squareObjectId, requestedAt: Date.now() };
       setRefreshingSquare(true);
-      setSaveError(null);
       refreshItemFromSquare(id)
         .catch((error: unknown) => {
-          setSaveError(toUserErrorMessage(error, "SQUARE_ITEM_REFRESH"));
+          // 自動確認の一時的な失敗では、最後に取得できた商品情報と確認日時を
+          // そのまま表示する。エンドユーザーには通知せず、開発者向けログだけを残す。
+          toUserErrorMessage(error, "SQUARE_ITEM_REFRESH");
         })
         .finally(() => setRefreshingSquare(false));
     };
@@ -316,6 +372,10 @@ export function ItemDetailPage() {
     setSaveError(null);
     try {
       await saveItem(id, pendingPhotoDeletionIds);
+      persistedEditableItemRef.current = {
+        itemId: id,
+        patch: editableItemPatch(currentItem),
+      };
       showToast("下書きを保存しました。Squareには反映されていません");
     } catch (error) {
       setSaveError(toUserErrorMessage(error, "ITEM_SAVE"));
@@ -350,6 +410,10 @@ export function ItemDetailPage() {
         if (!response.ok) throw new AppError("SQUARE_UPDATE", result, result?.message);
         const photoResult = await syncPhotosToSquare(id);
         await markSquareSynced(id, squareDescription);
+        persistedEditableItemRef.current = {
+          itemId: id,
+          patch: editableItemPatch({ ...currentItem, description: squareDescription }),
+        };
         setPendingPhotoDeletionIds([]);
         setSavedBaseline({
           itemId: id,
@@ -405,6 +469,10 @@ export function ItemDetailPage() {
           result.squareVariationId,
           squareDescription,
         );
+        persistedEditableItemRef.current = {
+          itemId: id,
+          patch: editableItemPatch({ ...currentItem, description: squareDescription }),
+        };
         setPendingPhotoDeletionIds([]);
         const warnings = [result.inventorySyncWarning, result.imageSyncWarning].filter(Boolean);
         showToast(warnings.length > 0

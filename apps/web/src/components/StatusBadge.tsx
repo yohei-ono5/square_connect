@@ -38,7 +38,7 @@ export function SquareCheckedAt({
       className={`square-checked-at ${className}`.trim()}
       dateTime={item.squareSyncedAt ?? undefined}
     >
-      Squareとの最終同期: {item.squareSyncedAt ? formatSquareCheckedAt(item.squareSyncedAt) : "未確認"}
+      Squareの最終確認: {item.squareSyncedAt ? formatSquareCheckedAt(item.squareSyncedAt) : "未確認"}
     </time>
   );
 }
