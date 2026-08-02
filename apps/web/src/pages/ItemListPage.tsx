@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useItems, type MockItem, type SquareCategory } from "../store/ItemsContext";
-import { StatusBadge } from "../components/StatusBadge";
+import { isSquareItemSoldOut, StatusBadge } from "../components/StatusBadge";
 import {
   sortCategoriesForRegistration,
   sortParentCategoriesForRegistration,
@@ -393,7 +393,12 @@ export function ItemListPage() {
                   }}
                 >
                   <div>
-                    <p style={{ margin: 0, fontSize: 14 }}>{item.title || "（商品名未設定）"}</p>
+                    <p className="list-item-title">
+                      <span>{item.title || "（商品名未設定）"}</span>
+                      {isSquareItemSoldOut(item) && (
+                        <span className="badge badge-danger inventory-sold-out-badge">売切</span>
+                      )}
+                    </p>
                     <p className="subtitle">
                       {item.mgmtNo} ・ ¥{item.price.toLocaleString()}
                     </p>

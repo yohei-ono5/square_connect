@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MockItem } from "../store/ItemsContext";
-import { getSquareSyncStatus } from "./StatusBadge";
+import { getSquareSyncStatus, isSquareItemSoldOut } from "./StatusBadge";
 
 function item(overrides: Partial<MockItem> = {}): MockItem {
   return {
@@ -70,5 +70,26 @@ describe("getSquareSyncStatus", () => {
 
   it("prioritizes a Square deletion over the sync timestamp", () => {
     expect(getSquareSyncStatus(item({ squareDeletedAt: "2026-07-22T02:00:00.000Z" }))).toBe("deleted");
+  });
+});
+
+describe("isSquareItemSoldOut", () => {
+  it("marks a Square-registered item with zero inventory as sold out", () => {
+    expect(isSquareItemSoldOut(item({ inventoryCount: 0 }))).toBe(true);
+  });
+
+  it("does not mark an item with inventory as sold out", () => {
+    expect(isSquareItemSoldOut(item({ inventoryCount: 1 }))).toBe(false);
+  });
+
+  it("does not mark an unregistered draft as sold out", () => {
+    expect(isSquareItemSoldOut(item({ squareObjectId: null, inventoryCount: 0 }))).toBe(false);
+  });
+
+  it("does not add a sold-out state to an item deleted from Square", () => {
+    expect(isSquareItemSoldOut(item({
+      inventoryCount: 0,
+      squareDeletedAt: "2026-07-22T02:00:00.000Z",
+    }))).toBe(false);
   });
 });

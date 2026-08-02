@@ -2,6 +2,10 @@ import type { MockItem } from "../store/ItemsContext";
 
 export type SquareSyncStatus = "unregistered" | "pending" | "reflected" | "deleted";
 
+export function isSquareItemSoldOut(item: MockItem): boolean {
+  return Boolean(item.squareObjectId) && !item.squareDeletedAt && item.inventoryCount === 0;
+}
+
 export function getSquareSyncStatus(item: MockItem): SquareSyncStatus {
   if (!item.squareObjectId) return "unregistered";
   if (item.squareDeletedAt) return "deleted";

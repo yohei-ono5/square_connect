@@ -272,6 +272,22 @@ h1 {
   min-width: 0;
 }
 
+.list-item-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.inventory-sold-out-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .header-actions {
   display: flex;
   gap: 8px;
