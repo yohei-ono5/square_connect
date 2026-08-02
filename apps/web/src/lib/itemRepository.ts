@@ -2,6 +2,7 @@ import type { Condition, Gender, Item, ItemStatus } from "@square-connect/shared
 import { WORKER_BASE_URL } from "./config";
 import { getSupabase } from "./supabaseClient";
 import { AppError, type AppErrorKey } from "./appError";
+import { authenticatedFetch } from "./authFetch";
 
 export type StoredPhoto = {
   id: string;
@@ -48,6 +49,12 @@ type ItemRow = {
   updated_at: string;
   square_synced_at: string | null;
   square_deleted_at: string | null;
+  created_at: string;
+  created_by: string | null;
+  last_edited_by: string | null;
+  last_edited_at: string | null;
+  creator: { first_name: string; last_name: string } | null;
+  last_editor: { first_name: string; last_name: string } | null;
 };
 
 const ITEM_COLUMNS = [
@@ -72,6 +79,12 @@ const ITEM_COLUMNS = [
   "updated_at",
   "square_synced_at",
   "square_deleted_at",
+  "created_at",
+  "created_by",
+  "last_edited_by",
+  "last_edited_at",
+  "creator:profiles!items_created_by_fkey(first_name,last_name)",
+  "last_editor:profiles!items_last_edited_by_fkey(first_name,last_name)",
 ].join(",");
 
 type DefaultStore = {
@@ -110,6 +123,12 @@ function rowToItem(row: ItemRow): Item {
     updatedAt: row.updated_at,
     squareSyncedAt: row.square_synced_at,
     squareDeletedAt: row.square_deleted_at,
+    createdAt: row.created_at,
+    createdBy: row.creator ? { firstName: row.creator.first_name, lastName: row.creator.last_name } : null,
+    lastEditedAt: row.last_edited_at,
+    lastEditedBy: row.last_editor
+      ? { firstName: row.last_editor.first_name, lastName: row.last_editor.last_name }
+      : null,
   };
 }
 
@@ -156,44 +175,22 @@ export function validateSquareImage(file: File): string | null {
 async function resolveDefaultStore(): Promise<DefaultStore> {
   const configuredStoreId = import.meta.env.VITE_DEFAULT_STORE_ID?.trim();
   const supabase = getSupabase();
-  if (configuredStoreId) {
-    const configured = await supabase
-      .from("stores")
-      .select("store_id,company_name")
-      .eq("store_id", configuredStoreId)
-      .maybeSingle();
-    if (configured.error) throw repositoryError("DATA_STORE", configured.error);
-    if (!configured.data) throw new AppError("DATA_STORE");
-    return {
-      id: configured.data.store_id as string,
-      companyName: configured.data.company_name as string,
-    };
-  }
-
-  const existing = await supabase
-    .from("stores")
-    .select("store_id,company_name")
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError || !authData.user) throw new AppError("DATA_STORE", authError);
+  let membershipQuery = supabase
+    .from("store_memberships")
+    .select("store_id,stores!inner(company_name)")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
     .order("created_at")
     .limit(1);
-  if (existing.error) throw repositoryError("DATA_STORE", existing.error);
-  if (existing.data?.[0]?.store_id) {
-    return {
-      id: existing.data[0].store_id as string,
-      companyName: existing.data[0].company_name as string,
-    };
-  }
-
-  const created = await supabase
-    .from("stores")
-    .insert({ company_name: "検証用企業", store_name: "検証用店舗" })
-    .select("store_id,company_name")
-    .single();
-  if (created.error || !created.data?.store_id) {
-    throw repositoryError("DATA_STORE", created.error);
-  }
+  if (configuredStoreId) membershipQuery = membershipQuery.eq("store_id", configuredStoreId);
+  const membership = await membershipQuery.maybeSingle();
+  if (membership.error || !membership.data) throw repositoryError("DATA_STORE", membership.error);
+  const store = membership.data.stores as unknown as { company_name: string };
   return {
-    id: created.data.store_id as string,
-    companyName: created.data.company_name as string,
+    id: membership.data.store_id as string,
+    companyName: store.company_name,
   };
 }
 
@@ -239,7 +236,7 @@ export async function uploadItemPhoto(
   const body = new FormData();
   body.append("role", role);
   body.append("file", file, file.name);
-  const response = await fetch(`${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos`, {
+  const response = await authenticatedFetch(`${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos`, {
     method: "POST",
     body,
   });
@@ -257,7 +254,7 @@ export type PhotoSquareSyncResult = {
 };
 
 export async function syncItemPhotosToSquare(itemId: string): Promise<PhotoSquareSyncResult> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos/sync-to-square`,
     { method: "POST" },
   );
@@ -296,7 +293,7 @@ export type SquareListRefreshResult = {
 };
 
 export async function refreshActiveItemsFromSquare(): Promise<SquareListRefreshResult> {
-  const response = await fetch(`${WORKER_BASE_URL}/api/items/sync-active-from-square`, {
+  const response = await authenticatedFetch(`${WORKER_BASE_URL}/api/items/sync-active-from-square`, {
     method: "POST",
   });
   const result = (await response.json().catch(() => null)) as
@@ -309,7 +306,7 @@ export async function refreshActiveItemsFromSquare(): Promise<SquareListRefreshR
 }
 
 export async function refreshItemFromSquare(itemId: string): Promise<SquareItemRefresh> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/sync-from-square`,
     { method: "POST" },
   );
@@ -323,7 +320,7 @@ export async function refreshItemFromSquare(itemId: string): Promise<SquareItemR
 }
 
 export async function deleteItemPhoto(itemId: string, itemPhotoId: string): Promise<void> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${WORKER_BASE_URL}/api/items/${encodeURIComponent(itemId)}/photos/${encodeURIComponent(itemPhotoId)}`,
     { method: "DELETE" },
   );
@@ -362,6 +359,9 @@ export async function createItem(input: {
   categoryId?: string | null;
 }): Promise<Item> {
   const storeId = await getDefaultStoreId();
+  const { data: authData, error: authError } = await getSupabase().auth.getUser();
+  if (authError || !authData.user) throw itemPersistenceError(authError);
+  const now = new Date().toISOString();
   const result = await getSupabase()
     .from("items")
     .insert({
@@ -373,6 +373,9 @@ export async function createItem(input: {
       inventory_count: input.inventoryCount,
       category: input.category ?? null,
       square_category_id: input.categoryId ?? null,
+      created_by: authData.user.id,
+      last_edited_by: authData.user.id,
+      last_edited_at: now,
     })
     .select(ITEM_COLUMNS)
     .single();
@@ -382,25 +385,42 @@ export async function createItem(input: {
 
 export async function saveItem(item: Item): Promise<string> {
   const updatedAt = new Date().toISOString();
+  const { data: authData, error: authError } = await getSupabase().auth.getUser();
+  if (authError || !authData.user) throw itemPersistenceError(authError);
+  const editablePatch = {
+    status: item.status,
+    mgmt_no: item.mgmtNo.trim(),
+    title: item.title.trim(),
+    price: item.price,
+    inventory_count: item.inventoryCount,
+    gender: item.gender,
+    category: item.category,
+    square_category_id: item.categoryId,
+    size: item.size,
+    condition: item.condition,
+    m_shoulder: item.measurements?.shoulderCm ?? null,
+    m_chest: item.measurements?.chestCm ?? null,
+    m_length: item.measurements?.lengthCm ?? null,
+    m_sleeve: item.measurements?.sleeveCm ?? null,
+    description: item.description,
+  };
+  const persisted = await getSupabase()
+    .from("items")
+    .select(Object.keys(editablePatch).join(","))
+    .eq("item_id", item.id)
+    .single();
+  if (persisted.error || !persisted.data) throw itemPersistenceError(persisted.error);
+  const contentChanged = Object.entries(editablePatch).some(
+    ([key, value]) => (persisted.data as unknown as Record<string, unknown>)[key] !== value,
+  );
+  if (!contentChanged) return item.updatedAt ?? updatedAt;
   const result = await getSupabase()
     .from("items")
     .update({
-      status: item.status,
-      mgmt_no: item.mgmtNo.trim(),
-      title: item.title.trim(),
-      price: item.price,
-      inventory_count: item.inventoryCount,
-      gender: item.gender,
-      category: item.category,
-      square_category_id: item.categoryId,
-      size: item.size,
-      condition: item.condition,
-      m_shoulder: item.measurements?.shoulderCm ?? null,
-      m_chest: item.measurements?.chestCm ?? null,
-      m_length: item.measurements?.lengthCm ?? null,
-      m_sleeve: item.measurements?.sleeveCm ?? null,
-      description: item.description,
+      ...editablePatch,
       updated_at: updatedAt,
+      last_edited_by: authData.user.id,
+      last_edited_at: updatedAt,
     })
     .eq("item_id", item.id);
   if (result.error) throw itemPersistenceError(result.error);

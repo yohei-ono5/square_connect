@@ -14,7 +14,7 @@ packages/
   shared/   共有型・zodスキーマ
   measure/  採寸ロジック（docs/mvp_prototype.html から移植。現状は未実装のスタブ）
 supabase/
-  migrations/  DBスキーマ・テスト運用向け公開RLSポリシー
+  migrations/  DBスキーマ・認証済み利用者向けRLSポリシー
 docs/       アプリの実行には不要な資料（元要件・動くプロトタイプ）
 ```
 
@@ -69,13 +69,71 @@ Square反映後も再撮影を避けられるようR2原本と写真レコード
 表示順の1枚目を正面写真（`main`）、2枚目以降を追加写真（`sub`）として保存する。
 複数枚のアップロード途中で失敗した場合は、作成済みの一時商品と保存済み写真を破棄する。
 
-### テスト運用中のアクセス
+### ログインと権限
 
-初期段階ではSupabase Authによるログインを使用しない。URLを知っている利用者は、
-ブラウザのPublishable keyを通じて`stores`、`items`、`item_photos`を読み書きできる。
-Square同期用テーブルは公開せず、Secret keyを持つWorkerだけが操作する。
+Supabase Authを認証・セッション基盤として使用し、ログイン方法はGoogle OAuthに限定する。
+利用者は初回のGoogleログイン後に姓・名・店舗コードを入力し、店舗管理者の承認後に利用を開始する。
+メール招待、アプリ独自のパスワード、Supabaseからの認証メールは使用しない。
 
-この公開設定はテスト運用専用とし、本運用前にログインと店舗単位のRLSへ切り替える。
+利用者は店舗ごとに`admin`（管理者）または`staff`（スタッフ）として所属し、店舗単位のRLSで
+商品・写真を保護する。管理者は管理メニューで利用申請の承認・却下と、同一店舗スタッフの
+利用停止を行える。却下された利用者は同じGoogleアカウントから再申請できる。店舗管理者が
+承認できるのは`staff`だけで、システム管理者は`system_admins`で店舗ロールと分けて管理する。
+プロフィールでは姓・名だけを変更でき、Googleのメールアドレスと権限は参照専用で表示する。
+通常のログアウトは現在の端末のセッションだけを終了する。
+商品一覧の一段ヘッダー左端にハンバーガーメニューを置き、プロフィール、管理メニュー、
+ログアウトを収納する。管理メニューは`admin`とシステム管理者だけに表示する。
+
+ログイン状態はブラウザへ保存し、短時間のアクセストークンを自動更新する。エンドユーザーの
+再ログイン頻度を下げるため、セッションの最大期間と無操作タイムアウトは設定しない。
+アプリやブラウザを閉じても通常はログイン状態を維持する。退職・端末紛失時は管理者が
+対象スタッフを利用停止し、残っているセッションからの商品アクセスを店舗単位RLSとWorkerで拒否する。
+詳細は[ログイン状態の保持](./docs/authentication_setup.md#ログイン状態の保持)を参照する。
+
+Worker APIと非公開R2の商品画像もSupabaseのアクセストークンと店舗所属を検証する。
+Square Webhookだけはユーザーログインの対象外とし、Square署名で認証する。
+
+Google Cloud・Supabaseの設定、店舗コード、初回管理者登録、スタッフ運用、本番切り替えの詳細は
+[Googleログイン・権限設定ガイド](./docs/authentication_setup.md)を参照する。
+
+Supabase DashboardのAuthentication ProvidersでGoogleを有効にし、Google Cloudで発行した
+OAuth Client IDとClient Secretを登録する。Google CloudのAuthorized redirect URIには
+Supabase Dashboardに表示されるCallback URLを、SupabaseのRedirect URLsには本番アプリURLと
+ローカル開発URLを登録する。
+
+初回導入では、`0006_auth_roles_and_item_editors.sql`適用後に最初の管理者がGoogleログインを行う。
+この時点では承認待ち画面になるため、Supabase Dashboardで作成されたユーザーUUIDを確認し、
+そのユーザーの`store_memberships`をSQL Editorから登録する。例：
+
+```sql
+update profiles
+set last_name = '管理者の姓', first_name = '管理者の名'
+where user_id = 'AuthユーザーUUID';
+
+insert into store_memberships (store_id, user_id, role, is_active)
+values ('店舗UUID', 'AuthユーザーUUID', 'admin', true)
+on conflict (store_id, user_id)
+do update set
+  role = 'admin',
+  is_active = true,
+  disabled_at = null,
+  updated_at = now();
+```
+
+システム全体を運用する本人のアカウントだけは、上記に加えて`system_admins`へ登録する。
+店舗オーナーなど通常の管理者にはシステム管理者権限を付与しない。
+
+スタッフへ案内する店舗コードは英大文字・数字6文字とし、コード本体ではなくSHA-256ハッシュを
+登録する。発行時は紛らわしい`I`、`O`、`0`、`1`を避ける。入力時の小文字は大文字へ変換される。
+次の`店舗コードのSHA-256`は64文字の小文字16進数に置き換える。
+
+```sql
+insert into store_registration_codes (store_id, code_hash)
+values ('店舗UUID', '店舗コードのSHA-256');
+```
+
+店舗コードはログイン情報ではなく申請先を特定するためのものなので、コードを知っていても
+管理者の承認なしでは商品データへアクセスできない。
 
 ### 商品登録フロー
 
@@ -99,8 +157,8 @@ Squareの商品名には商品名だけを登録し、商品番号はバリエ�
 どちらで検出しても「商品番号（SKU）が重複しています。」と
 `ERR-ITEM-001`を表示する。
 
-`VITE_DEFAULT_STORE_ID`が未設定の場合は`stores`の最初の店舗を使う。
-店舗が1件もない場合は、検証用の企業・店舗を自動作成する。
+`VITE_DEFAULT_STORE_ID`が未設定の場合は、ログインユーザーが所属する最初の有効店舗を使う。
+設定した場合も、その店舗への有効な所属が必要になる。
 現在の1社運用では、選択された店舗の`stores.company_name`を商品一覧の見出しに表示する。
 
 ### Squareの販売チャネル運用
@@ -186,9 +244,13 @@ Square側の変更は`catalog.version.updated` Webhookを
 `POST /api/webhooks/square`で受信し、前回同期時刻以降の変更をSupabaseへ反映する。
 利用前に以下を行う。
 
+`0006_auth_roles_and_item_editors.sql`は匿名アクセスを終了するため、本番のGoogleログイン対応Web・
+Workerと同じ切り替え作業内で適用する。main反映前には適用しない。詳しい順序は
+[Googleログイン・権限設定ガイド](./docs/authentication_setup.md#本番切り替え順序)を参照する。
+
 1. `supabase/migrations/0001_init.sql`、`0002_item_photos_square_image.sql`、
    `0003_item_square_category.sql`、`0004_item_photo_deletion_state.sql`、
-   `0005_item_inventory_count.sql`を順番に適用する
+   `0005_item_inventory_count.sql`、`0006_auth_roles_and_item_editors.sql`を順番に適用する
 2. Workerへ`SUPABASE_URL`、`SUPABASE_SECRET_KEY`（SupabaseのSecret key）、
    `SQUARE_WEBHOOK_SIGNATURE_KEY`、`SQUARE_WEBHOOK_NOTIFICATION_URL`を設定する
 3. Square Developer Consoleで、上記通知URLを`catalog.version.updated`へ登録する
@@ -299,4 +361,7 @@ pnpm test        # 全パッケージのテストを実行
 - `stores.company_name`を商品一覧の見出しに表示する
 - 採寸は写真なしでも手動入力でき、自動採寸は確認後に反映する試験機能として提供する
 - 商品アーカイブではSquareとR2を変更せず、SKUを使用済みのまま保持する
-- Supabase Authは未使用で、テスト運用向け公開RLSを使用している
+- Supabase Auth、管理者／スタッフ権限、店舗単位RLSでDB・Worker API・商品画像を保護する
+- Googleログイン、初回利用申請、管理者承認、却下後の再申請、プロフィールを実装済み（本番OAuth設定と認証切り替えはmain反映時に実施する）
+- 商品一覧は一段ヘッダーとし、ハンバーガーメニューからプロフィール・管理・ログアウトへ遷移する
+- 商品の登録者と、商品内容に実差分を保存した最後の更新者を表示する

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import app from "./index";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import app, { setRequestAuthenticatorForTests } from "./index";
 
 const r2Get = vi.fn();
 const r2Put = vi.fn();
@@ -50,6 +50,93 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+beforeEach(() => {
+  setRequestAuthenticatorForTests(async () => ({
+    userId: "11111111-1111-4111-8111-111111111111",
+    storeId: "22222222-2222-4222-8222-222222222222",
+    role: "admin",
+    isSystemAdmin: true,
+  }));
+});
+
+describe("authentication and roles", () => {
+  it("rejects an unauthenticated API request", async () => {
+    setRequestAuthenticatorForTests(async () => null);
+    const response = await app.request("/api/square/categories", {}, env);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: "unauthorized" });
+  });
+
+  it("does not allow staff to use the admin menu API", async () => {
+    setRequestAuthenticatorForTests(async () => ({
+      userId: "11111111-1111-4111-8111-111111111111",
+      storeId: "22222222-2222-4222-8222-222222222222",
+      role: "staff",
+      isSystemAdmin: false,
+    }));
+    const response = await app.request("/api/admin/staff", {}, env);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "forbidden" });
+  });
+
+  it("accepts a Google user store access request without an active membership", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse({
+        id: "33333333-3333-4333-8333-333333333333",
+        email: "staff@gmail.com",
+      }))
+      .mockResolvedValueOnce(squareResponse([{ store_id: "22222222-2222-4222-8222-222222222222" }]))
+      .mockResolvedValueOnce(squareResponse([]))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 201 }));
+
+    const response = await app.request("/api/access-request", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer user-session-jwt",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ lastName: "山田", firstName: "花子", storeCode: "ab23cd" }),
+    }, env);
+
+    expect(response.status).toBe(201);
+    expect(fetchSpy.mock.calls[1]?.[0]).toMatch(/store_registration_codes\?code_hash=eq\.[0-9a-f]{64}/);
+    expect(String(fetchSpy.mock.calls[1]?.[0])).not.toContain("AB23CD");
+    expect(JSON.parse(String((fetchSpy.mock.calls[4]?.[1] as RequestInit)?.body))).toMatchObject({
+      user_id: "33333333-3333-4333-8333-333333333333",
+      status: "pending",
+    });
+  });
+
+  it("approves a request as staff and records the approving administrator", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(squareResponse([{ status: "pending" }]))
+      .mockResolvedValueOnce(new Response(null, { status: 201 }))
+      .mockResolvedValueOnce(squareResponse([{}]));
+
+    const response = await app.request(
+      "/api/admin/access-requests/33333333-3333-4333-8333-333333333333",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve" }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(String((fetchSpy.mock.calls[1]?.[1] as RequestInit)?.body))).toMatchObject({
+      user_id: "33333333-3333-4333-8333-333333333333",
+      role: "staff",
+      approved_by: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(JSON.parse(String((fetchSpy.mock.calls[2]?.[1] as RequestInit)?.body))).toMatchObject({
+      status: "approved",
+      reviewed_by: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+});
+
 describe("item photo storage", () => {
   it("serves a stored R2 image from its media URL", async () => {
     const itemId = "22c9f0c8-a7be-4438-a1a2-1c7a6722dbd4";
@@ -68,7 +155,7 @@ describe("item photo storage", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/jpeg");
-    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(response.headers.get("cache-control")).toBe("private, max-age=3600");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes);
     expect(r2Get).toHaveBeenCalledWith(storagePath);
   });
@@ -765,7 +852,7 @@ describe("POST /api/items/sync-active-from-square", () => {
       missing: 0,
     });
     expect(fetchSpy.mock.calls[0][0]).toBe(
-      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&select=square_object_id,square_variation_id,mgmt_no,title,price,inventory_count,description,square_category_id,square_deleted_at",
+      "https://project.supabase.co/rest/v1/items?deleted_at=is.null&square_object_id=not.is.null&store_id=eq.22222222-2222-4222-8222-222222222222&select=square_object_id,square_variation_id,mgmt_no,title,price,inventory_count,description,square_category_id,square_deleted_at",
     );
     expect(fetchSpy.mock.calls[1][0]).toBe(
       "https://connect.squareupsandbox.com/v2/catalog/batch-retrieve",

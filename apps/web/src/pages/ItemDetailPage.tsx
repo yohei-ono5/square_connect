@@ -11,6 +11,8 @@ import {
 import { useItems, type MockItem, type PhotoRole } from "../store/ItemsContext";
 import { getSquareSyncStatus, SquareCheckedAt, StatusBadge } from "../components/StatusBadge";
 import { WORKER_BASE_URL } from "../lib/config";
+import { authenticatedFetch } from "../lib/authFetch";
+import { AuthenticatedImage, loadAuthenticatedImageUrl } from "../components/AuthenticatedImage";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 import {
   sortCategoriesForRegistration,
@@ -392,7 +394,7 @@ export function ItemDetailPage() {
       const squareDescription = buildDescription(currentItem);
       await saveItem(id, pendingPhotoDeletionIds);
       if (currentItem.squareObjectId) {
-        const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/square`, {
+        const response = await authenticatedFetch(`${WORKER_BASE_URL}/api/items/${id}/square`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -433,7 +435,7 @@ export function ItemDetailPage() {
         const activePhotoCount = currentItem.photos.filter(
           (photo) => !pendingPhotoDeletionIds.includes(photo.id),
         ).length;
-        const response = await fetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {
+        const response = await authenticatedFetch(`${WORKER_BASE_URL}/api/items/${id}/register-to-square`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -539,7 +541,9 @@ export function ItemDetailPage() {
     if (!id || !mainPhoto) return;
     setMeasuring(true);
     try {
-      const { points, detected: matched } = await detectInitialMeasurePoints(mainPhoto.previewUrl);
+      const { points, detected: matched } = await detectInitialMeasurePoints(
+        await loadAuthenticatedImageUrl(mainPhoto.previewUrl),
+      );
       setAutoMeasureResult({ points, measurements: calculateMeasurements(points), detected: matched });
     } finally {
       setMeasuring(false);
@@ -642,6 +646,12 @@ export function ItemDetailPage() {
           <div className="item-detail-title">
             <p style={{ fontSize: 16, fontWeight: 500, margin: 0 }}>{item.title || "（商品名未設定）"}</p>
             <SquareCheckedAt item={item} className="item-detail-checked-at" />
+            <p className="item-editor-meta">
+              登録者：{item.createdBy ? `${item.createdBy.lastName} ${item.createdBy.firstName}` : "移行前のデータ"}
+              {item.lastEditedBy && (
+                <> ／ 最終更新者：{item.lastEditedBy.lastName} {item.lastEditedBy.firstName}</>
+              )}
+            </p>
           </div>
           <div className="item-detail-square-actions">
             <StatusBadge item={item} showCheckedAt={false} />
@@ -679,7 +689,7 @@ export function ItemDetailPage() {
           <div className="photo-grid">
             {mainPhoto ? (
               <div className={`photo-slot filled ${pendingPhotoDeletionIds.includes(mainPhoto.id) ? "pending-delete" : ""}`}>
-                <img src={mainPhoto.previewUrl} alt="正面" />
+                <AuthenticatedImage src={mainPhoto.previewUrl} alt="正面" />
                 <span className="photo-slot-label">正面</span>
                 {pendingPhotoDeletionIds.includes(mainPhoto.id) && (
                   <span className="photo-delete-status">削除予定</span>
@@ -711,7 +721,7 @@ export function ItemDetailPage() {
                 key={photo.id}
                 className={`photo-slot filled ${pendingPhotoDeletionIds.includes(photo.id) ? "pending-delete" : ""}`}
               >
-                <img src={photo.previewUrl} alt="追加写真" />
+                <AuthenticatedImage src={photo.previewUrl} alt="追加写真" />
                 {pendingPhotoDeletionIds.includes(photo.id) && (
                   <span className="photo-delete-status">削除予定</span>
                 )}
@@ -796,7 +806,7 @@ export function ItemDetailPage() {
           ) : (
             <>
               <div className="measure-card">
-                <img src={mainPhoto.previewUrl} alt="正面" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
+                <AuthenticatedImage src={mainPhoto.previewUrl} alt="正面" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
                 <div style={{ flex: 1 }}>
                   <p style={{ fontSize: 13, margin: 0 }}>
                     {measuring ? "検出中…" : autoMeasureResult ? "自動入力の候補を作成しました" : "写真から採寸候補を作成します"}
@@ -836,7 +846,7 @@ export function ItemDetailPage() {
                   onPointerCancel={endPointDrag}
                   onPointerLeave={endPointDrag}
                 >
-                  <img src={mainPhoto.previewUrl} alt="採寸用正面写真" />
+                  <AuthenticatedImage src={mainPhoto.previewUrl} alt="採寸用正面写真" />
                   <svg className="measure-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                     <line
                       x1={measurePoints.shoulderL.x}

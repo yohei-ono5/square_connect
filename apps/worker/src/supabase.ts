@@ -56,10 +56,10 @@ export async function getActiveSquareItem(
   return row?.square_object_id ? { ...row, square_object_id: row.square_object_id } : null;
 }
 
-export async function listActiveSquareItems(config: SupabaseConfig): Promise<ActiveSquareItem[]> {
+export async function listActiveSquareItems(config: SupabaseConfig, storeId?: string): Promise<ActiveSquareItem[]> {
   const response = await supabaseRequest(
     config,
-    `items?deleted_at=is.null&square_object_id=not.is.null&select=${ACTIVE_SQUARE_ITEM_COLUMNS}`,
+    `items?deleted_at=is.null&square_object_id=not.is.null${storeId ? `&store_id=eq.${encodeURIComponent(storeId)}` : ""}&select=${ACTIVE_SQUARE_ITEM_COLUMNS}`,
   );
   const rows = (await response.json()) as Array<ActiveSquareItem & { square_object_id: string | null }>;
   const items = new Map<string, ActiveSquareItem>();
@@ -137,6 +137,192 @@ async function supabaseRequest(
     throw new Error(`Supabase request failed (${response.status}): ${detail}`);
   }
   return response;
+}
+
+export type RequestAccount = {
+  userId: string;
+  storeId: string;
+  role: "admin" | "staff";
+  isSystemAdmin: boolean;
+};
+
+export async function verifySupabaseUser(
+  config: SupabaseConfig,
+  authorization: string,
+): Promise<{ id: string; email?: string } | null> {
+  assertConfig(config);
+  const response = await fetch(`${config.url.replace(/\/$/, "")}/auth/v1/user`, {
+    headers: { apikey: config.secretKey, Authorization: authorization },
+  });
+  if (!response.ok) return null;
+  const user = await response.json() as { id?: string; email?: string };
+  return user.id ? { id: user.id, email: user.email } : null;
+}
+
+export async function getRequestAccount(
+  config: SupabaseConfig,
+  userId: string,
+): Promise<RequestAccount | null> {
+  const [membershipResponse, systemAdminResponse] = await Promise.all([
+    supabaseRequest(config, `store_memberships?user_id=eq.${encodeURIComponent(userId)}&is_active=eq.true&select=store_id,role&order=created_at.asc&limit=1`),
+    supabaseRequest(config, `system_admins?user_id=eq.${encodeURIComponent(userId)}&select=user_id&limit=1`),
+  ]);
+  const memberships = await membershipResponse.json() as Array<{ store_id: string; role: "admin" | "staff" }>;
+  const systemAdmins = await systemAdminResponse.json() as Array<{ user_id: string }>;
+  const membership = memberships[0];
+  if (!membership) return null;
+  return { userId, storeId: membership.store_id, role: membership.role, isSystemAdmin: systemAdmins.length > 0 };
+}
+
+export async function getItemStoreId(config: SupabaseConfig, itemId: string): Promise<string | null> {
+  const response = await supabaseRequest(config, `items?item_id=eq.${encodeURIComponent(itemId)}&select=store_id&limit=1`);
+  const rows = await response.json() as Array<{ store_id: string }>;
+  return rows[0]?.store_id ?? null;
+}
+
+export type StaffMembership = {
+  user_id: string;
+  role: "admin" | "staff";
+  is_active: boolean;
+  profile: { first_name: string; last_name: string } | null;
+};
+
+export type StoreAccessRequest = {
+  user_id: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+  profile: { first_name: string; last_name: string } | null;
+};
+
+export async function listStoreStaff(config: SupabaseConfig, storeId: string): Promise<StaffMembership[]> {
+  const response = await supabaseRequest(config, `store_memberships?store_id=eq.${encodeURIComponent(storeId)}&select=user_id,role,is_active,profile:profiles!store_memberships_user_id_fkey(first_name,last_name)&order=created_at.asc`);
+  return await response.json() as StaffMembership[];
+}
+
+export async function upsertStaffMembership(
+  config: SupabaseConfig,
+  input: { storeId: string; userId: string; approvedBy: string },
+): Promise<void> {
+  await supabaseRequest(config, "store_memberships?on_conflict=store_id,user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({
+      store_id: input.storeId,
+      user_id: input.userId,
+      role: "staff",
+      is_active: true,
+      approved_by: input.approvedBy,
+      disabled_at: null,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
+export async function findStoreByRegistrationCodeHash(
+  config: SupabaseConfig,
+  codeHash: string,
+): Promise<string | null> {
+  const response = await supabaseRequest(
+    config,
+    `store_registration_codes?code_hash=eq.${encodeURIComponent(codeHash)}&select=store_id&limit=1`,
+  );
+  const rows = await response.json() as Array<{ store_id: string }>;
+  return rows[0]?.store_id ?? null;
+}
+
+export async function submitStoreAccessRequest(
+  config: SupabaseConfig,
+  input: { storeId: string; userId: string; firstName: string; lastName: string },
+): Promise<void> {
+  await supabaseRequest(config, `profiles?user_id=eq.${encodeURIComponent(input.userId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      first_name: input.firstName,
+      last_name: input.lastName,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  await supabaseRequest(config, "store_access_requests?on_conflict=store_id,user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({
+      store_id: input.storeId,
+      user_id: input.userId,
+      status: "pending",
+      reviewed_by: null,
+      reviewed_at: null,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
+export async function listStoreAccessRequests(
+  config: SupabaseConfig,
+  storeId: string,
+): Promise<StoreAccessRequest[]> {
+  const response = await supabaseRequest(
+    config,
+    `store_access_requests?store_id=eq.${encodeURIComponent(storeId)}&select=user_id,status,created_at,updated_at,profile:profiles!store_access_requests_user_id_fkey(first_name,last_name)&order=created_at.asc`,
+  );
+  return await response.json() as StoreAccessRequest[];
+}
+
+export async function getStoreAccessRequest(
+  config: SupabaseConfig,
+  storeId: string,
+  userId: string,
+): Promise<{ status: StoreAccessRequest["status"] } | null> {
+  const response = await supabaseRequest(
+    config,
+    `store_access_requests?store_id=eq.${encodeURIComponent(storeId)}&user_id=eq.${encodeURIComponent(userId)}&select=status&limit=1`,
+  );
+  const rows = await response.json() as Array<{ status: StoreAccessRequest["status"] }>;
+  return rows[0] ?? null;
+}
+
+export async function reviewStoreAccessRequest(
+  config: SupabaseConfig,
+  input: {
+    storeId: string;
+    userId: string;
+    status: "pending" | "approved" | "rejected";
+    reviewedBy?: string;
+  },
+): Promise<boolean> {
+  const response = await supabaseRequest(
+    config,
+    `store_access_requests?store_id=eq.${encodeURIComponent(input.storeId)}&user_id=eq.${encodeURIComponent(input.userId)}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        status: input.status,
+        reviewed_by: input.reviewedBy ?? null,
+        reviewed_at: input.reviewedBy ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  return ((await response.json()) as unknown[]).length > 0;
+}
+
+export async function disableStaffMembership(
+  config: SupabaseConfig,
+  storeId: string,
+  userId: string,
+): Promise<boolean> {
+  const response = await supabaseRequest(
+    config,
+    `store_memberships?store_id=eq.${encodeURIComponent(storeId)}&user_id=eq.${encodeURIComponent(userId)}&role=eq.staff&is_active=eq.true`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ is_active: false, disabled_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+    },
+  );
+  return ((await response.json()) as unknown[]).length > 0;
 }
 
 export async function getLastCatalogUpdatedAt(

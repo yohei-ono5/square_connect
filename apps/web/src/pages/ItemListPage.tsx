@@ -7,6 +7,7 @@ import {
   sortParentCategoriesForRegistration,
 } from "../lib/categorySorting";
 import { toUserErrorMessage } from "../lib/appError";
+import { AccountMenu } from "../components/AccountMenu";
 
 type SortKey = "mgmtNoAsc" | "mgmtNoDesc" | "priceAsc" | "priceDesc" | "title";
 type CategoryOption = Pick<SquareCategory, "id" | "name" | "parentName">;
@@ -225,11 +226,13 @@ export function ItemListPage() {
   return (
     <div className="screen">
       <div className="header">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <h1 className="item-list-title">
-            {companyName && <span className="item-list-company-name">{companyName}</span>}
-            <span>商品一覧</span>
-          </h1>
+        <div className="item-list-header-row">
+          <div className="item-list-heading">
+            <AccountMenu />
+            <h1 className="item-list-title" title={companyName || "商品一覧"}>
+              {companyName || "商品一覧"}
+            </h1>
+          </div>
           <div className="header-actions">
             {selectionMode ? (
               <>

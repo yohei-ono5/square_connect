@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Item } from "@square-connect/shared";
 import type { MeasurePoints } from "@square-connect/measure";
 import { WORKER_BASE_URL } from "../lib/config";
+import { authenticatedFetch } from "../lib/authFetch";
 import { AppError, toUserErrorMessage } from "../lib/appError";
+import { UI_PREVIEW_ENABLED } from "../lib/uiPreview";
 import {
   createItem as createStoredItem,
   deleteItemPhoto as deleteStoredPhoto,
@@ -90,16 +92,17 @@ function normalizeMgmtNo(mgmtNo: string): string {
 }
 
 export function ItemsProvider({ children }: { children: ReactNode }) {
-  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(UI_PREVIEW_ENABLED ? "Rosso&Nero" : null);
   const [items, setItems] = useState<MockItem[]>([]);
-  const [itemsLoading, setItemsLoading] = useState(true);
+  const [itemsLoading, setItemsLoading] = useState(!UI_PREVIEW_ENABLED);
   const [itemsError, setItemsError] = useState<string | null>(null);
-  const [squareCategories, setSquareCategories] = useState<SquareCategory[] | null>(null);
+  const [squareCategories, setSquareCategories] = useState<SquareCategory[] | null>(UI_PREVIEW_ENABLED ? [] : null);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const categoriesRequestedRef = useRef(false);
 
   useEffect(() => {
+    if (UI_PREVIEW_ENABLED) return;
     let active = true;
     getDefaultCompanyName()
       .then((name) => {
@@ -114,6 +117,12 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reloadItems = useCallback(async () => {
+    if (UI_PREVIEW_ENABLED) {
+      setItems([]);
+      setItemsError(null);
+      setItemsLoading(false);
+      return;
+    }
     const [storedItems, storedPhotos] = await Promise.all([listItems(), listItemPhotos()]);
     setItems(storedItems.map((item) => ({
       ...item,
@@ -123,6 +132,7 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (UI_PREVIEW_ENABLED) return;
     let active = true;
     setItemsLoading(true);
     reloadItems()
@@ -141,11 +151,15 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
   // 詳細画面のuseEffectから安全に呼べるよう参照を固定する。失敗時も自動で再試行を
   // 繰り返さず、画面を開いている間は結果（成功・空・失敗）をそのまま表示する。
   const loadSquareCategories = useCallback(() => {
+    if (UI_PREVIEW_ENABLED) {
+      setSquareCategories([]);
+      return;
+    }
     if (categoriesRequestedRef.current) return;
     categoriesRequestedRef.current = true;
     setCategoriesLoading(true);
     setCategoriesError(null);
-    fetch(`${WORKER_BASE_URL}/api/square/categories`)
+    authenticatedFetch(`${WORKER_BASE_URL}/api/square/categories`)
       .then(async (response) => {
         const result = (await response.json().catch(() => null)) as
           | { categories?: SquareCategory[]; message?: string }
@@ -241,17 +255,8 @@ export function ItemsProvider({ children }: { children: ReactNode }) {
         const nextPendingIds = pendingPhotoDeletionIds
           ?? item.photos.filter((photo) => photo.pendingDelete).map((photo) => photo.id);
         await saveItemPhotoDeletionDraft(id, nextPendingIds);
-        const updatedAt = await persistItem(item);
-        setItems((prev) => prev.map((candidate) => candidate.id === id
-          ? {
-              ...candidate,
-              updatedAt,
-              photos: candidate.photos.map((photo) => ({
-                ...photo,
-                pendingDelete: nextPendingIds.includes(photo.id),
-              })),
-            }
-          : candidate));
+        await persistItem(item);
+        await reloadItems();
       },
       saveSquareRegistration: async (id, squareObjectId, squareVariationId, description) => {
         const syncedAt = await persistSquareRegistration(

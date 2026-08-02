@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { buildDescription } from "@square-connect/shared";
 import { useItems } from "../store/ItemsContext";
 import { WORKER_BASE_URL } from "../lib/config";
+import { authenticatedFetch } from "../lib/authFetch";
 import { SQUARE_IMAGE_ACCEPT, validateSquareImage } from "../lib/itemRepository";
 import {
   sortCategoriesForRegistration,
@@ -130,7 +131,7 @@ export function QuickRegisterPage() {
       });
       temporaryItemId = item.id;
       const squareDescription = buildDescription(item);
-      const response = await fetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
+      const response = await authenticatedFetch(`${WORKER_BASE_URL}/api/items/${item.id}/register-to-square`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

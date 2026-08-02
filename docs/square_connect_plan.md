@@ -585,6 +585,10 @@ type MeasureGarmentInput = {
 
 ## 22. 今後確認が必要な事項
 
+> この文書は元要件である。認証・権限を含む実装後の決定は
+> [square_connect_architecture.md](../square_connect_architecture.md)と
+> [authentication_setup.md](./authentication_setup.md)を正とする。
+
 - Squareへ登録する具体的な項目
 - Square APIでの商品・画像登録範囲
 - ~~管理番号の採番ルール~~ → 2026-07-16解決：共有カウンタで自動採番、必須項目（SKU）
@@ -598,7 +602,7 @@ type MeasureGarmentInput = {
 - マットの実寸・素材・最大対応サイズ
 - 許容する採寸誤差
 - 対応する最低端末・OSバージョン
-- スタッフアカウント機能の必要性
+- ~~スタッフアカウント機能の必要性~~ → 2026-08-03解決：Supabase AuthのGoogleログイン、管理者承認、`admin`／`staff`権限を採用
 
 ---
 

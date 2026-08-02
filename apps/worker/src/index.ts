@@ -21,18 +21,30 @@ import {
 import {
   createItemPhoto,
   deleteItemPhoto,
+  disableStaffMembership,
+  findStoreByRegistrationCodeHash,
   getActiveSquareItem,
+  getItemStoreId,
   getItemPhoto,
   getItemSquareObjectId,
   getLastCatalogUpdatedAt,
+  getRequestAccount,
+  getStoreAccessRequest,
   listActiveSquareItems,
   listItemPhotos,
+  listStoreStaff,
+  listStoreAccessRequests,
   markItemPhotoDeleted,
   recordWebhookEvent,
   saveCatalogUpdatedAt,
   saveItemPhotoSquareImageId,
+  reviewStoreAccessRequest,
+  submitStoreAccessRequest,
   updateItemBySquareId,
+  upsertStaffMembership,
+  verifySupabaseUser,
   type ActiveSquareItem,
+  type RequestAccount,
   type SquareItemPatch,
 } from "./supabase";
 import { verifySquareWebhookSignature } from "./webhook";
@@ -48,16 +60,81 @@ type Bindings = {
   SUPABASE_SECRET_KEY: string;
 };
 
-const app = new Hono<{ Bindings: Bindings }>();
+type Variables = {
+  account: RequestAccount;
+  authUser: { id: string; email?: string };
+};
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 app.use(
   "/api/*",
   cors({
     origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type"],
+    allowHeaders: ["Content-Type", "Authorization"],
   }),
 );
+
+type RequestAuthenticator = (authorization: string | undefined, env: Bindings) => Promise<RequestAccount | null>;
+
+async function authenticateSupabaseRequest(
+  authorization: string | undefined,
+  env: Bindings,
+): Promise<RequestAccount | null> {
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const config = supabaseConfig(env);
+  const user = await verifySupabaseUser(config, authorization);
+  return user ? getRequestAccount(config, user.id) : null;
+}
+
+let requestAuthenticator: RequestAuthenticator = authenticateSupabaseRequest;
+
+// 既存のWorker単体テストでは外部Auth通信を差し替える。HTTP経由では変更できず、
+// 実運用では常に上のSupabase検証が使われる。
+export function setRequestAuthenticatorForTests(authenticator: RequestAuthenticator) {
+  requestAuthenticator = authenticator;
+}
+
+app.use("/api/*", async (c, next) => {
+  if (c.req.path === "/api/webhooks/square") return next();
+  if (c.req.path === "/api/access-request") {
+    const authorization = c.req.header("Authorization");
+    const user = authorization?.startsWith("Bearer ")
+      ? await verifySupabaseUser(supabaseConfig(c.env), authorization).catch(() => null)
+      : null;
+    if (!user) return c.json({ error: "unauthorized", message: "ログインが必要です" }, 401);
+    c.set("authUser", user);
+    return next();
+  }
+  const account = await requestAuthenticator(c.req.header("Authorization"), c.env).catch((error) => {
+    console.error("Authentication failed", error);
+    return null;
+  });
+  if (!account) return c.json({ error: "unauthorized", message: "ログインが必要です" }, 401);
+  c.set("account", account);
+
+  const itemMatch = c.req.path.match(/^\/api\/items\/([^/]+)(?:\/|$)/);
+  if (itemMatch && itemMatch[1] !== "sync-active-from-square" && !account.isSystemAdmin) {
+    const itemStoreId = await getItemStoreId(supabaseConfig(c.env), itemMatch[1]);
+    if (!itemStoreId || itemStoreId !== account.storeId) {
+      return c.json({ error: "not_found", message: "商品が見つかりません" }, 404);
+    }
+  }
+  return next();
+});
+
+app.use("/media/*", async (c, next) => {
+  const account = await requestAuthenticator(c.req.header("Authorization"), c.env).catch(() => null);
+  if (!account) return c.json({ error: "unauthorized" }, 401);
+  c.set("account", account);
+  const itemId = c.req.path.match(/^\/media\/items\/([^/]+)\//)?.[1];
+  if (!itemId) return c.notFound();
+  if (!account.isSystemAdmin) {
+    const itemStoreId = await getItemStoreId(supabaseConfig(c.env), itemId);
+    if (!itemStoreId || itemStoreId !== account.storeId) return c.notFound();
+  }
+  return next();
+});
 
 app.get("/health", (c) => c.json({ ok: true }));
 
@@ -105,6 +182,23 @@ function resolveSquareInventoryLocation(env: Bindings) {
 
 function supabaseConfig(env: Bindings) {
   return { url: env.SUPABASE_URL, secretKey: env.SUPABASE_SECRET_KEY };
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function authAdminRequest(env: Bindings, path: string, init: RequestInit = {}) {
+  const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/, "")}/auth/v1/${path}`, {
+    ...init,
+    headers: {
+      apikey: env.SUPABASE_SECRET_KEY,
+      "Content-Type": "application/json",
+      ...init.headers,
+    },
+  });
+  return response;
 }
 
 function squareSnapshotPatch(
@@ -408,7 +502,7 @@ app.get("/media/:storagePath{.+}", async (c) => {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "public, max-age=31536000, immutable");
+  headers.set("cache-control", "private, max-age=3600");
   headers.set("x-content-type-options", "nosniff");
   return new Response(object.body, { headers });
 });
@@ -620,7 +714,7 @@ app.post("/api/items/sync-active-from-square", async (c) => {
   try {
     const database = supabaseConfig(c.env);
     // 一覧と同じ条件（未アーカイブ）かつSquare登録済みの商品だけを対象にする。
-    const activeItems = await listActiveSquareItems(database);
+    const activeItems = await listActiveSquareItems(database, c.get("account").storeId);
     const squareObjectIds = activeItems.map((item) => item.square_object_id);
     if (squareObjectIds.length === 0) {
       return c.json({ targeted: 0, changed: 0, unchanged: 0, deleted: 0, missing: 0 });
@@ -742,6 +836,166 @@ app.get("/api/square/categories", async (c) => {
 
     console.error("Square category fetch failed", error);
     return c.json({ error: "configuration_error", message: "Square連携の設定を確認してください" }, 500);
+  }
+});
+
+app.post("/api/access-request", async (c) => {
+  const user = c.get("authUser");
+  const body = await c.req.json().catch(() => null) as {
+    firstName?: string;
+    lastName?: string;
+    storeCode?: string;
+  } | null;
+  const firstName = body?.firstName?.trim();
+  const lastName = body?.lastName?.trim();
+  const storeCode = body?.storeCode?.trim().toUpperCase();
+  if (!firstName || !lastName || firstName.length > 100 || lastName.length > 100 || !storeCode || !/^[A-Z0-9]{6}$/.test(storeCode)) {
+    return c.json({ error: "validation_error", message: "姓・名・店舗コードを確認してください" }, 400);
+  }
+
+  try {
+    const database = supabaseConfig(c.env);
+    const storeId = await findStoreByRegistrationCodeHash(database, await sha256Hex(storeCode));
+    if (!storeId) return c.json({ error: "invalid_store_code", message: "店舗コードが正しくありません" }, 404);
+    const existing = await getStoreAccessRequest(database, storeId, user.id);
+    if (existing?.status === "approved") {
+      return c.json({ error: "already_approved", message: "このアカウントは登録済みです。画面を再読み込みしてください" }, 409);
+    }
+    await submitStoreAccessRequest(database, { storeId, userId: user.id, firstName, lastName });
+    return c.json({ ok: true }, 201);
+  } catch (error) {
+    console.error("Store access request failed", error);
+    return c.json({ error: "access_request_failed", message: "利用申請を送信できませんでした" }, 500);
+  }
+});
+
+app.get("/api/admin/staff", async (c) => {
+  const account = c.get("account");
+  if (account.role !== "admin" && !account.isSystemAdmin) {
+    return c.json({ error: "forbidden", message: "管理者権限が必要です" }, 403);
+  }
+  try {
+    const [memberships, usersResponse] = await Promise.all([
+      listStoreStaff(supabaseConfig(c.env), account.storeId),
+      authAdminRequest(c.env, "admin/users?page=1&per_page=1000"),
+    ]);
+    if (!usersResponse.ok) throw new Error(`Auth users request failed (${usersResponse.status})`);
+    const authResult = await usersResponse.json() as {
+      users?: Array<{ id: string; email?: string; last_sign_in_at?: string | null }>;
+    };
+    const users = new Map((authResult.users ?? []).map((user) => [user.id, user]));
+    return c.json({
+      members: memberships.map((membership) => ({
+        userId: membership.user_id,
+        email: users.get(membership.user_id)?.email ?? "",
+        firstName: membership.profile?.first_name ?? "未設定",
+        lastName: membership.profile?.last_name ?? "未設定",
+        role: membership.role,
+        isActive: membership.is_active,
+        lastSignInAt: users.get(membership.user_id)?.last_sign_in_at ?? null,
+      })),
+    });
+  } catch (error) {
+    console.error("Staff list loading failed", error);
+    return c.json({ error: "staff_list_failed", message: "スタッフ一覧を取得できませんでした" }, 500);
+  }
+});
+
+app.get("/api/admin/access-requests", async (c) => {
+  const account = c.get("account");
+  if (account.role !== "admin" && !account.isSystemAdmin) {
+    return c.json({ error: "forbidden", message: "管理者権限が必要です" }, 403);
+  }
+  try {
+    const [requests, usersResponse] = await Promise.all([
+      listStoreAccessRequests(supabaseConfig(c.env), account.storeId),
+      authAdminRequest(c.env, "admin/users?page=1&per_page=1000"),
+    ]);
+    if (!usersResponse.ok) throw new Error(`Auth users request failed (${usersResponse.status})`);
+    const authResult = await usersResponse.json() as {
+      users?: Array<{ id: string; email?: string }>;
+    };
+    const users = new Map((authResult.users ?? []).map((user) => [user.id, user]));
+    return c.json({
+      requests: requests.map((request) => ({
+        userId: request.user_id,
+        email: users.get(request.user_id)?.email ?? "",
+        firstName: request.profile?.first_name ?? "未設定",
+        lastName: request.profile?.last_name ?? "未設定",
+        status: request.status,
+        requestedAt: request.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error("Access request list loading failed", error);
+    return c.json({ error: "request_list_failed", message: "利用申請一覧を取得できませんでした" }, 500);
+  }
+});
+
+app.patch("/api/admin/access-requests/:userId", async (c) => {
+  const account = c.get("account");
+  if (account.role !== "admin" && !account.isSystemAdmin) {
+    return c.json({ error: "forbidden", message: "管理者権限が必要です" }, 403);
+  }
+  const userId = c.req.param("userId");
+  if (!isValidPhotoId(userId)) return c.json({ error: "invalid_user_id", message: "ユーザーIDが不正です" }, 400);
+  const body = await c.req.json().catch(() => null) as { action?: "approve" | "reject" | "reopen" } | null;
+  if (!body?.action || !["approve", "reject", "reopen"].includes(body.action)) {
+    return c.json({ error: "validation_error", message: "操作内容が不正です" }, 400);
+  }
+
+  try {
+    const database = supabaseConfig(c.env);
+    const request = await getStoreAccessRequest(database, account.storeId, userId);
+    if (!request) return c.json({ error: "not_found", message: "対象の利用申請が見つかりません" }, 404);
+    if (body.action === "approve") {
+      await upsertStaffMembership(database, {
+        storeId: account.storeId,
+        userId,
+        approvedBy: account.userId,
+      });
+      await reviewStoreAccessRequest(database, {
+        storeId: account.storeId,
+        userId,
+        status: "approved",
+        reviewedBy: account.userId,
+      });
+    } else if (body.action === "reject") {
+      await reviewStoreAccessRequest(database, {
+        storeId: account.storeId,
+        userId,
+        status: "rejected",
+        reviewedBy: account.userId,
+      });
+    } else {
+      await reviewStoreAccessRequest(database, {
+        storeId: account.storeId,
+        userId,
+        status: "pending",
+      });
+    }
+    return c.json({ ok: true });
+  } catch (error) {
+    console.error("Access request review failed", error);
+    return c.json({ error: "request_review_failed", message: "利用申請を更新できませんでした" }, 500);
+  }
+});
+
+app.delete("/api/admin/staff/:userId", async (c) => {
+  const account = c.get("account");
+  if (account.role !== "admin" && !account.isSystemAdmin) {
+    return c.json({ error: "forbidden", message: "管理者権限が必要です" }, 403);
+  }
+  const userId = c.req.param("userId");
+  if (!isValidPhotoId(userId)) return c.json({ error: "invalid_user_id", message: "ユーザーIDが不正です" }, 400);
+  if (userId === account.userId) return c.json({ error: "cannot_disable_self", message: "自分自身は利用停止にできません" }, 409);
+  try {
+    const disabled = await disableStaffMembership(supabaseConfig(c.env), account.storeId, userId);
+    if (!disabled) return c.json({ error: "not_found", message: "対象のスタッフが見つかりません" }, 404);
+    return c.json({ ok: true });
+  } catch (error) {
+    console.error("Staff disabling failed", error);
+    return c.json({ error: "staff_disable_failed", message: "スタッフを利用停止にできませんでした" }, 500);
   }
 });
 

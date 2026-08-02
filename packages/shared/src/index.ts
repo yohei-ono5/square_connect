@@ -45,6 +45,10 @@ export const ItemSchema = z.object({
   updatedAt: z.string().optional(),
   squareSyncedAt: z.string().nullable().optional(),
   squareDeletedAt: z.string().nullable().optional(),
+  createdAt: z.string().optional(),
+  createdBy: z.object({ firstName: z.string(), lastName: z.string() }).nullable().optional(),
+  lastEditedAt: z.string().nullable().optional(),
+  lastEditedBy: z.object({ firstName: z.string(), lastName: z.string() }).nullable().optional(),
 });
 export type Item = z.infer<typeof ItemSchema>;
 

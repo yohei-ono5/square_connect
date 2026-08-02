@@ -42,8 +42,8 @@ Web プロトタイプ＝「動く仕様書」。中核パイプラインはヘ�
   ネイティブ化はストア審査等の手間を踏まえて後回し。Webアプリの画面フロー・ロジックをそのまま移植する前提。
 - **MEASURE — OpenCV相当のロジック（ArUco＋色分割＋ホモグラフィ）**
   Webプロトで実証済みのロジックをWebアプリでそのまま使用。**写真・採寸は任意項目**：未アップロードでも商品登録を進められ、後から追加・再計測できる。
-- **DB — Supabase（Postgres）／画像 — Cloudflare R2**
-  商品・店舗・写真メタデータはSupabaseへ、画像ファイル本体は非公開R2バケットへ保存する。テスト運用中はSupabase Authを使わず、Publishable keyで店舗・商品・写真メタデータを読み書きする。本運用時にログインと店舗単位のRLSを導入する。
+- **DB — Supabase（Postgres / Auth）／画像 — Cloudflare R2**
+  商品・店舗・写真メタデータはSupabaseへ、画像ファイル本体は非公開R2バケットへ保存する。Supabase Authの管理者／スタッフ権限と店舗単位RLSでDBを保護し、Worker APIと画像配信も同じアクセストークンと店舗所属を検証する。
 - **SERVER — Cloudflare Workers（TypeScript）**
   Square/メルカリ連携、SKU重複チェックなどのAPIロジックを実行する層。Squareトークンをここに秘匿し端末には置かない。SupabaseへはREST/クライアントSDK経由でアクセス。
 - **SQUARE — Cloudflare Workers 経由**
@@ -60,7 +60,7 @@ Web プロトタイプ＝「動く仕様書」。中核パイプラインはヘ�
 │ 端末(ブラウザ)│⇄  │ Cloudflare    │⇄ │  Supabase             │   │  Square         │
 │ 複数スタッフ  │   │ Workers(TS)   │   │  DB   = 共有下書き      │   │  Catalog API    │
 │ 複数端末     │   │ Square/R2連携  │   │  写真メタデータ          │   │  商品・画像登録    │
-│ (将来RNへ移行)│   │ 画像配信・削除  │   │  Auth = テスト中は未使用 │   │  商品更新         │
+│ (将来RNへ移行)│   │ 画像配信・削除  │   │  Auth・店舗単位RLS       │   │  商品更新         │
 │             │   │ SKU重複チェック│⇄  │  R2 = 画像本体          │→ │  画像削除         │
 └────────────┘   └──────────────┘   └──────────────────────┘   └────────────────┘
 ```
@@ -75,6 +75,15 @@ Web プロトタイプ＝「動く仕様書」。中核パイプラインはヘ�
 ```sql
 -- 企業・店舗（小規模運用を前提に1テーブルで管理）
 stores       (store_id, company_id, company_name, store_name, created_at, updated_at)
+
+-- Googleログイン利用者と店舗権限
+profiles               (user_id→auth.users.id, last_name, first_name, created_at, updated_at)
+store_memberships      (store_id, user_id, role['admin'|'staff'], is_active,
+                        approved_by, disabled_at, created_at, updated_at)
+system_admins          (user_id→profiles.user_id, created_at)
+store_registration_codes (store_id, code_hash, updated_at)
+store_access_requests  (store_id, user_id, status['pending'|'approved'|'rejected'],
+                        reviewed_by, reviewed_at, created_at, updated_at)
 
 -- 商品の下書き本体
 items        (item_id, store_id→stores.store_id, status['draft'|'confirmed'|'pushed'],
@@ -100,7 +109,9 @@ item_photos  (item_photo_id, item_id→items.item_id, role['main'|'sub'],
 square_sync_state     (merchant_id, last_catalog_updated_at, updated_at)
 square_webhook_events (square_event_id, event_type, received_at)
 
--- テスト運用中は stores / items / item_photos をanonロールへ公開。本運用前に認証・店舗スコープRLSへ変更
+-- 0006適用後はanonアクセスを廃止し、Googleログイン済みかつ有効な店舗所属を持つ利用者だけに公開
+-- profilesは本人と同一店舗の利用者、store_membershipsは本人・店舗管理者・システム管理者に必要範囲だけ公開
+-- 店舗コードは英大文字・数字6文字。WorkerだけがSHA-256ハッシュで照合し、ブラウザには公開しない
 -- mgmt_no はスタッフの手入力（2026-07-16変更：自動採番から変更）。店舗内はDB制約とアプリ側で重複を防ぎ、
 -- Square側の重複はWorkerがSearchCatalogObjectsで別途チェックする（二重の防御）
 -- deleted_at は商品アーカイブとして使う。アーカイブ後もSKUを保持し、Square商品・Square画像・R2画像は削除しない
@@ -122,6 +133,7 @@ SaaS 化で “変わる所” は薄い層に閉じ込め、コスト源は先�
 - Square 接続を **1モジュールに隔離**（後で OAuth へ差し替え）
 - 全データに **store_id** ／ 安定 ID・updated_at・論理削除
 - Webアプリはレスポンシブで複数端末のブラウザから共通利用（将来RNへ移行してもSupabase/Cloudflare Workersはそのまま使える）
+- Supabase Authセッションはブラウザへ永続化し、期限・無操作タイムアウトを設けず自動更新する。退職・端末紛失時は店舗所属の利用停止でアクセスを遮断する
 
 **SaaS フェーズまで作らない**
 - 課金・サブスク
@@ -145,11 +157,11 @@ SaaS 化で “変わる所” は薄い層に閉じ込め、コスト源は先�
 | Phase | 状態 | 内容 |
 |---|---|---|
 | **0** | ✅ 済 | **パイプライン検証・Web プロト** — マーカー検知／遠近補正／自動配置を実測検証。UX 一巡を実装。 |
-| **1** | 🚧 実装・検証中 | **Webアプリ化 ＋ Supabase ＋ R2 ＋ Square連携** — 商品・画像登録、Webhook同期、商品単位の手動再取得まで実装済み。同期状態の一覧表示は次の作業。 |
+| **1** | 🚧 実装・検証中 | **Webアプリ化 ＋ Supabase ＋ R2 ＋ Square連携** — 商品・画像登録、Webhook同期、同期状態表示、Googleログイン、スタッフ承認、店舗単位RLSまで実装。Google Cloud／Supabaseの本番OAuth設定と認証切り替えはmain反映時に実施する。 |
 | **2** | ○ 後 | **採寸・写真ワークフローの充実** — 自動採寸精度向上、追加写真ストリップ、タグOCR等をWebアプリ上で拡充。 |
 | **3** | ○ 後 | **ネイティブアプリ化（React Native）** — ライブカメラ検知・リアルタイム撮影ガイド。ストア審査対応。Webアプリの画面フロー・ロジックを移植。 |
 | **4** | ○ 後 | **マルチデバイス運用強化・他チャネル在庫連携** — 複数スタッフ・複数端末での競合制御、メルカリShops等の他チャネル在庫同期（詳細は[[square-mercari-api-capabilities]]メモ）。 |
-| **5** | ○ 後 | **SaaS 化** — Supabase Auth・店舗単位RLS・マルチテナント／課金／他店 OAuth・オンボーディング。 |
+| **5** | 🚧 一部実装 | **SaaS 化** — Supabase AuthのGoogle OAuth、管理者／スタッフ、利用申請、店舗単位RLSを実装。マルチテナント／課金／Squareの他店OAuth・店舗オンボーディングは後続。 |
 
 ### Phase 1 の作業ブロック
 1. **最小商品登録（最優先）**：必須入力を「管理番号（SKU、手入力）」「商品名」「金額」「在庫数」の4項目に絞り、在庫数は1を初期表示する。対象・カテゴリ・サイズ・写真・採寸4項目・コンディションはすべて未入力でよい。
@@ -232,8 +244,8 @@ POSレジだけで利用する。EC掲載が必要な商品だけ、登録後に
 
 ### 想定画面（改訂）
 
-1. ログインなし（テスト運用。URLを知っている利用者がアクセス可能。本運用前にスタッフ認証を追加）
-2. **商品一覧（ホーム）** — **2026-07-16再改訂：状態バッジ・フィルタ・統計はすべてSquare登録状況（Square登録済み／Square未登録）に統一**。詳細（写真・採寸・基本情報）が埋まっているかどうかのトラッキングは一旦廃止し、作り直す予定。＋新規登録ボタン。あわせて商品管理システム的な要素として、**統計サマリー**（総数／Square登録済み／Square未登録の3件）、**検索・絞り込み**（商品名・カテゴリ・SKUでのテキスト検索＋Square登録状況でのフィルタ）、**並べ替え**（**2026-07-16改訂：登録日時を実際には保持していなかった「登録が新しい/古い順」は廃止**。商品番号順（昇順・降順）・価格が安い/高い順・商品名のあいうえお順に変更）を備える。各行のSKU表記は「SKU」というラベルを付けず番号のみ表示する。
+1. **ログイン・利用申請** — Supabase AuthのGoogle OAuthでログインし、初回は姓・名・店舗コードを入力して管理者の承認を待つ。店舗管理者は申請を承認・却下でき、承認済みスタッフだけが店舗の商品へアクセスできる。
+2. **商品一覧（ホーム）** — ヘッダーは一段とし、左からハンバーガーメニュー、店舗名、更新・選択・登録ボタンを配置する。店舗名が長い場合は省略表示する。ハンバーガーメニューにはログイン中の氏名・メールアドレス・権限と、商品一覧、プロフィール、管理メニュー（管理者のみ）、ログアウトを表示する。一覧には商品名、商品番号、価格、Square状態を表示し、商品名・SKU検索、大カテゴリ・中カテゴリ絞り込み、商品番号・価格・商品名の並べ替えを提供する。統計サマリーは置かず、スマートフォンで商品を多く表示できることを優先する。
 
 **Square反映状態の判定**：`square_object_id`、`updated_at`、`square_synced_at`、`square_deleted_at`と、`item_photos.square_image_id`、`pending_delete_at`から、`Square未登録`、`Square未反映`、`Square反映済み`、`Square側で削除済み`の4状態を算出する。登録済み商品を下書き保存した場合、未反映写真または削除予定写真がある場合は`Square未反映`とし、Square更新または最新情報取得の成功後に`Square反映済み`へ戻す。この表示は永久的な一致保証ではなく、状態バッジの下に`Square最終確認日時`を併記する。Square側の変更は`catalog.version.updated` WebhookでSupabaseへ反映し、ブラウザへフォーカスが戻った際に一覧を自動再読込する。登録済みの商品詳細を開いた際と詳細画面へ戻った際は、30秒間の連続取得抑止を設けたうえで対象IDの最新値をSquareから自動取得し、手動取得ボタンも提供する。同期エラー履歴の表示と定期照合は未実装である。
 3. **クイック登録** — 商品番号（SKU）・商品名・金額・在庫数の4つを必須入力とし、在庫数は1を初期表示する。カテゴリと写真は任意とする（SKUはスタッフの手入力、金額と在庫数は0〜9のみ入力可）。カテゴリはSquareの親子階層に合わせた「大カテゴリ→中カテゴリ」の2段階選択とし、大カテゴリだけ、または未設定でも登録できる。中カテゴリは選択した大カテゴリの配下だけを表示する。表示順は現在月から判定する季節との相性（春=3〜5月、夏=6〜8月、秋=9〜11月、冬=12〜2月）→商品一覧での利用回数→カテゴリ名の日本語順とし、大カテゴリは配下の評価を集約する。季節外（例：夏のダウン）は下位へ送る。選択したカテゴリ名とIDをSupabaseへ保存する。Square登録時、大カテゴリのみなら`CatalogItem.categories`と`reporting_category`の両方へ大カテゴリIDを設定し、中カテゴリを選んだ場合は`categories`へ中カテゴリID、`reporting_category`へ大カテゴリIDを設定する。在庫追跡を有効にし、Inventory APIで対象店舗の`IN_STOCK`を設定する。「下書き保存」を押した場合だけSupabaseの下書きとして一覧へ残す。「Squareに登録」では処理用の商品・写真を一時保存するが、Square登録が失敗した場合は完全破棄し、入力値と選択画像を保持したまま画面に留まる。成功時だけSquare IDをSupabaseへ保存し、商品一覧へ遷移する。写真なしでは画像同期を行わず、写真ありで同期に失敗した場合だけ警告する。Square作成後に応答だけ失われた場合はSKU再照会でIDを復旧し、重複登録を防ぐ。入力金額はSquareのJPY固定価格へそのまま送り、アプリでは税計算や税ID設定を行わない。
@@ -244,6 +256,9 @@ POSレジだけで利用する。EC掲載が必要な商品だけ、登録後に
    - 4d. 説明文プレビュー：自動生成テンプレートの確認・編集。商品名・SKUは表示のたびに現在値から組み立てるため、4aでの変更が即座に反映される
 5. **アーカイブ** — 選択商品を通常一覧から非表示にする。Square側の商品・写真とR2画像は削除せず、SKUも使用済みのまま保持する。Square商品の削除機能は初期段階では実装しない。
 6. 設定・マット登録（後続）
+
+Google Cloud・Supabaseの設定、初回管理者、店舗コード、スタッフ運用、本番切り替えは
+[Googleログイン・権限設定ガイド](./docs/authentication_setup.md)を正とする。
 
 ### 旧フローとの主な違い
 - 撮影ガイド画面（マーカー検出・傾き・明るさのリアルタイム表示）はPhase 1では実装しない。Web版は「撮影済みの写真をアップロード→アップロード後にまとめて検出・採寸」という非同期の形になる。
@@ -301,21 +316,23 @@ POSレジだけで利用する。EC掲載が必要な商品だけ、登録後に
 square_connect/
 ├── apps/
 │   ├── web/                 # Vite + React + TypeScript（SPA）
-│   │   └── Supabaseクライアントで直接DB読み書き（テスト中はanon公開）
+│   │   └── Supabase AuthのGoogleログイン＋認証済みクライアントで店舗単位のDB読み書き
 │   │       Worker Static AssetsとしてAPIと一体デプロイ
 │   └── worker/               # Cloudflare Workers + Hono
-│       └── Square/メルカリ連携、SKU重複チェックなど「秘密を扱う」処理のみ担当
-│           Squareトークン等はWorkerのSecretsに保持
+│       └── Square/R2連携、利用申請・スタッフ承認、SKU重複チェックなど
+│           「秘密または管理者権限を扱う」処理を担当。各リクエストでSupabaseの
+│           アクセストークンと店舗所属を検証し、秘密はWorkerのSecretsに保持
 ├── packages/
 │   ├── shared/                # 共有型・zodスキーマ（Item, MeasurementResult, Square連携用の型など）
 │   └── measure/               # 採寸ロジック（docs/mvp_prototype.htmlから移植：AR.Dictionary/AR.Detector・
 │   │                             solveHomography・autoLandmarks/placeLandmarks/computeMeas）
 │   │                             apps/web の「採寸」タブから呼び出す（ブラウザ内で完結）
 ├── supabase/
-│   └── migrations/            # 初期スキーマ＋Square画像ID・カテゴリID・写真削除状態、テスト運用向け公開RLS
+│   └── migrations/            # 初期スキーマ＋Square連携項目＋Googleログイン権限・店舗単位RLS
 ├── docs/                       # アプリの実行には不要な資料（要件・プロトタイプ）
 │   ├── mvp_prototype.html      # 動く仕様書。参照用として残す（改修しない）
 │   ├── square_connect_plan.md   # 元要件
+│   ├── authentication_setup.md  # Google OAuth、初回管理者、スタッフ承認、本番切り替え
 │   └── image02.gif
 ├── square_connect_architecture.md  # 現行の設計方針（生きたドキュメントのためルート直下に残す）
 ├── pnpm-workspace.yaml
@@ -323,8 +340,8 @@ square_connect/
 ```
 
 **役割分担の原則**：
-- `apps/web`：画面（商品一覧／クイック登録／商品詳細編集）とSupabaseへの通常のCRUD（テスト中はPublishable keyで公開アクセス）
-- `apps/worker`：Squareトークンなど**秘密を扱う処理**とR2画像操作を担当（Catalog API呼び出し、画像添付・削除、SKU重複チェック、将来のメルカリ連携）。`apps/web`からはこのWorkerを介してのみSquareとR2へ書き込む
+- `apps/web`：Googleログイン、利用申請、プロフィール、商品一覧／クイック登録／商品詳細編集と、認証済みSupabaseクライアントによる店舗単位の通常CRUD
+- `apps/worker`：Squareトークンなど**秘密を扱う処理**、R2画像操作、店舗コード照合、利用申請の承認を担当（Catalog API呼び出し、画像添付・削除、SKU重複チェック、将来のメルカリ連携）。ユーザー向けAPIではSupabaseアクセストークンと店舗所属を検証する
 - `packages/measure`：ブラウザで完結する採寸ロジック。サーバーに画像を送らず処理する非機能要件（元要件19章）にも合致
 
 **テスト**：`apps/web`・`packages/measure`はVitest。`apps/worker`は`@cloudflare/vitest-pool-workers`でWorkers環境を再現してテスト。
